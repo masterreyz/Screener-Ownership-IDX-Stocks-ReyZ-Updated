@@ -1164,3 +1164,100 @@
       animation-iteration-count:1 !important;
     }
   }
+
+  /* =========================================================
+     TABEL ENAM PERIODE: FEBRUARI–JULI 2026
+     Lebar minimum sengaja lebih besar agar setiap angka dan
+     judul perubahan terbaca penuh; kontainer menyediakan scroll.
+     ========================================================= */
+  table.ticker-hold-table{
+    min-width:2600px;
+  }
+
+  table.ticker-hold-table th:nth-child(n + 3):nth-child(-n + 8),
+  table.ticker-hold-table td:nth-child(n + 3):nth-child(-n + 8){
+    min-width:138px;
+  }
+
+  table.ticker-hold-table th:nth-child(n + 9),
+  table.ticker-hold-table td:nth-child(n + 9){
+    min-width:260px;
+  }
+
+  table.investor-hold-table{
+    min-width:2550px;
+  }
+
+  table.investor-hold-table.shares-view{
+    min-width:3300px;
+  }
+
+  table.investor-hold-table th:nth-child(n + 2):nth-child(-n + 7),
+  table.investor-hold-table td:nth-child(n + 2):nth-child(-n + 7){
+    min-width:142px;
+  }
+
+  table.investor-hold-table th:nth-child(n + 8),
+  table.investor-hold-table td:nth-child(n + 8){
+    min-width:270px;
+  }
+
+  table.investor-hold-table.shares-view th:nth-child(n + 2):nth-child(-n + 7),
+  table.investor-hold-table.shares-view td:nth-child(n + 2):nth-child(-n + 7){
+    min-width:210px;
+  }
+
+  table.investor-hold-table.shares-view th:nth-child(n + 8),
+  table.investor-hold-table.shares-view td:nth-child(n + 8){
+    min-width:310px;
+  }
+
+  table.screen-table{
+    min-width:4050px;
+  }
+
+  table.screen-table .screen-metric-row th,
+  table.screen-table tbody td:not(.td-label){
+    min-width:142px;
+  }
+
+  table.screen-table .screen-metric-row th:nth-child(1),
+  table.screen-table .screen-metric-row th:nth-child(6),
+  table.screen-table .screen-metric-row th:nth-child(7),
+  table.screen-table .screen-metric-row th:nth-child(11),
+  table.screen-table .screen-metric-row th:nth-child(12),
+  table.screen-table .screen-metric-row th:nth-child(16),
+  table.screen-table .screen-metric-row th:nth-child(17),
+  table.screen-table .screen-metric-row th:nth-child(21),
+  table.screen-table .screen-metric-row th:nth-child(22),
+  table.screen-table .screen-metric-row th:nth-child(26),
+  table.screen-table tbody td:nth-child(2),
+  table.screen-table tbody td:nth-child(7),
+  table.screen-table tbody td:nth-child(8),
+  table.screen-table tbody td:nth-child(12),
+  table.screen-table tbody td:nth-child(13),
+  table.screen-table tbody td:nth-child(17),
+  table.screen-table tbody td:nth-child(18),
+  table.screen-table tbody td:nth-child(22),
+  table.screen-table tbody td:nth-child(23),
+  table.screen-table tbody td:nth-child(27){
+    border-left:1px solid var(--border);
+  }
+
+  @media (max-width:720px){
+    table.ticker-hold-table{
+      min-width:2420px;
+    }
+
+    table.investor-hold-table{
+      min-width:2380px;
+    }
+
+    table.investor-hold-table.shares-view{
+      min-width:3150px;
+    }
+
+    table.screen-table{
+      min-width:3850px;
+    }
+  }
