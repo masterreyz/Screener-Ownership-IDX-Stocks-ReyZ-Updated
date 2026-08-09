@@ -300,7 +300,7 @@
         </div>
         <div class="rh-badges">${badges}</div>
       </div>
-      <div style="overflow-x:auto;">
+      <div class="table-scroll" role="region" aria-label="Tabel kepemilikan saham" tabindex="0">
       <table class="hold-table">
         <thead><tr>
           <th>Investor</th><th class="r-class">Klasifikasi</th><th style="text-align:right">Mei 2026</th><th style="text-align:right">Juni 2026</th><th style="text-align:right">Juli 2026</th><th style="text-align:right">Mei→Juni</th><th style="text-align:right">Juni→Juli</th>
@@ -540,7 +540,7 @@
         <div class="screen-count">Menampilkan <b>${shown.length}</b> dari <b>${total}</b> saham &middot; diurutkan berdasarkan <b>${SCREEN_COLS.find(c=>c.key===screenSortKey).label}</b> (${screenSortDir==='desc'?'terbesar → terkecil':'terkecil → terbesar'})</div>
       </div>
       <div class="screen-card">
-        <div style="overflow-x:auto; max-height:640px; overflow-y:auto;">
+        <div class="screen-scroll" role="region" aria-label="Tabel screening saham" tabindex="0">
           <table class="screen-table">
             <thead><tr><th class="th-label">Saham</th>${headHtml}</tr></thead>
             <tbody>${bodyHtml || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint); font-family:var(--font-body);">Tidak ada hasil.</td></tr>`}</tbody>
