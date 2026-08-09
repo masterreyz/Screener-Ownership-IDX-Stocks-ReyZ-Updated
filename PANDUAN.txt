@@ -1,0 +1,47 @@
+PEMISAHAN KODE PAPAN KEPEMILIKAN KSEI
+========================================
+
+Semua bahasa dan jenis berkas telah dipisahkan sebagai berikut:
+
+1. Screener.html
+   Bahasa: HTML
+   Fungsi: Struktur halaman dan penghubung ke CSS, JavaScript, serta SVG.
+
+2. Screener.css
+   Bahasa: CSS
+   Fungsi: Tampilan, warna, tata letak, tabel, animasi, dan responsivitas.
+
+3. Screener.js
+   Bahasa: JavaScript
+   Fungsi: Memuat JSON, membandingkan data Juni/Juli, pencarian, screening,
+   pengurutan, ticker tape, dan rendering antarmuka.
+
+4. data-jun.json
+   Format: JSON
+   Fungsi: Data pemegang saham periode Juni 2026.
+
+5. data-jul.json
+   Format: JSON
+   Fungsi: Data pemegang saham periode Juli 2026.
+
+6. search.svg
+   Bahasa/format: SVG (XML)
+   Fungsi: Ikon pencarian kecil pada kolom pencarian.
+
+7. empty-search.svg
+   Bahasa/format: SVG (XML)
+   Fungsi: Ikon pada pesan hasil pencarian kosong atau kegagalan data.
+
+CARA MENJALANKAN
+================
+
+Karena JavaScript memuat file JSON dengan fetch(), proyek perlu dibuka melalui
+server web, bukan dengan klik ganda langsung pada Screener.html.
+
+Contoh menggunakan Python:
+  python -m http.server 8000
+
+Kemudian buka:
+  http://localhost:8000/Screener.html
+
+Untuk hosting, unggah seluruh tujuh berkas ke folder yang sama.

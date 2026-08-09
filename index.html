@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Papan Kepemilikan — KSEI &gt;1% Mei→Juli 2026</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div class="tape-wrap">
+    <div class="tape-label">PERGERAKAN</div>
+    <div class="tape-track" id="tapeTrack"></div>
+  </div>
+
+  <header>
+    <div class="eyebrow">Data KSEI &middot; Pemegang Saham &gt;1%</div>
+    <h1>Papan <span class="accent">Kepemilikan</span></h1>
+    <p class="sub">Bandingkan pemegang saham &gt;1% antar-periode. Cari kode saham untuk melihat siapa masuk dan keluar, atau cari nama investor untuk melacak semua saham yang mereka pegang. Data periode <b>Mei → Juni → Juli 2026</b>.</p>
+  </header>
+
+  <div class="search-card">
+    <div class="tabs">
+      <button class="tab-btn active" data-mode="saham">CARI SAHAM</button>
+      <button class="tab-btn" data-mode="investor">CARI INVESTOR</button>
+      <button class="tab-btn" data-mode="screening">SCREENING</button>
+    </div>
+    <div class="search-box">
+      <img class="search-icon" src="search.svg" alt="" width="18" height="18">
+      <input type="text" id="searchInput" placeholder="Ketik kode saham, mis. BBCA, AWAN, PKPK..." autocomplete="off">
+      <button class="clear-btn" id="clearBtn">BERSIHKAN</button>
+    </div>
+    <div class="hint-row" id="hintRow"></div>
+  </div>
+
+  <main id="mainArea"></main>
+
+
+
+<script src="app.js"></script>
+</body>
+</html>
