@@ -391,7 +391,10 @@
     const arrow = sorted ? (state.dir==='desc' ? '▼' : '▲') : '↕';
     const ariaSort = sorted ? (state.dir==='desc' ? 'descending' : 'ascending') : 'none';
     const investorKey = encodeURIComponent(norm);
-    const metricLabel = view==='shares' ? 'total saham' : 'persentase kepemilikan';
+    const isChangeColumn = key.toLowerCase().includes('delta');
+    const metricLabel = isChangeColumn
+      ? (view==='shares' ? 'perubahan jumlah saham' : 'perubahan persentase')
+      : (view==='shares' ? 'total saham' : 'persentase kepemilikan');
     return `<th class="text-right${sorted?' sorted':''}" scope="col" aria-sort="${ariaSort}">
       <button type="button" class="table-sort-btn investor-sort-btn" data-investor-key="${investorKey}" data-view="${view}" data-key="${key}" aria-label="Urutkan ${metricLabel} ${label}">
         <span>${label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
@@ -566,7 +569,7 @@
     const metricName = isSharesView ? 'total holding shares' : 'persentase kepemilikan';
     const modeTitle = isSharesView ? 'Investor by Shares' : 'Cari Investor';
     let html = `<div class="section-title">${normNames.length} investor cocok · ${modeTitle}</div>
-      <p class="investor-search-note">Klik header Mei, Juni, atau Juli untuk mengurutkan ${metricName} pada setiap kartu investor. Urutan awal menggunakan Juli 2026 dari terbesar ke terkecil; nilai kosong selalu ditempatkan paling bawah.${isSharesView?' Angka ditampilkan sebagai jumlah lembar saham dengan pemisah ribuan format Indonesia.':''}</p>`;
+      <p class="investor-search-note">Klik header Mei 2026, Juni 2026, Juli 2026, Mei 2026 → Juni 2026, atau Juni 2026 → Juli 2026 untuk mengurutkan ${metricName} dan perubahannya. Urutan awal menggunakan Juli 2026 dari terbesar ke terkecil; nilai kosong selalu ditempatkan paling bawah.${isSharesView?' Angka ditampilkan sebagai jumlah lembar saham dengan pemisah ribuan format Indonesia.':''}</p>`;
     normNames.slice(0,15).forEach(norm=>{
       const meiRows = MEI.filter(r=>r.norm===norm);
       const junRows = JUN.filter(r=>r.norm===norm);
@@ -641,8 +644,8 @@
               ${investorSortHeader(norm, isSharesView?'mayShares':'mayPct', 'Mei 2026', view)}
               ${investorSortHeader(norm, isSharesView?'junShares':'junPct', 'Juni 2026', view)}
               ${investorSortHeader(norm, isSharesView?'julShares':'julPct', 'Juli 2026', view)}
-              <th class="text-right" scope="col">Mei→Juni</th>
-              <th class="text-right" scope="col">Juni→Juli</th>
+              ${investorSortHeader(norm, isSharesView?'shareDeltaMayJun':'deltaMayJun', 'Mei 2026 → Juni 2026', view)}
+              ${investorSortHeader(norm, isSharesView?'shareDeltaJunJul':'deltaJunJul', 'Juni 2026 → Juli 2026', view)}
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>
