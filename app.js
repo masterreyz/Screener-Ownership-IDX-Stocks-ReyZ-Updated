@@ -1,660 +1,673 @@
-(async function(){
+(async function () {
   "use strict";
 
-  // ---------- Load external JSON data ----------
-  async function loadJson(path){
+  // =========================================================
+  // KONFIGURASI PERIODE
+  // Untuk menambah bulan berikutnya, tambahkan satu objek baru di sini.
+  // Semua tabel, perubahan antarbulan, screening, dan sort akan mengikuti.
+  // =========================================================
+  const PERIODS = [
+    { key: "feb", label: "Februari 2026", short: "Februari", file: "data-feb2026.json" },
+    { key: "mar", label: "Maret 2026", short: "Maret", file: "data-mar2026.json" },
+    { key: "apr", label: "April 2026", short: "April", file: "data-apr2026.json" },
+    { key: "may", label: "Mei 2026", short: "Mei", file: "data-mei2026.json" },
+    { key: "jun", label: "Juni 2026", short: "Juni", file: "data-jun.json" },
+    { key: "jul", label: "Juli 2026", short: "Juli", file: "data-jul.json" },
+  ];
+
+  const TRANSITIONS = PERIODS.slice(1).map((current, index) => {
+    const previous = PERIODS[index];
+    const suffix = capitalize(previous.key) + capitalize(current.key);
+    return {
+      key: previous.key + current.key,
+      suffix,
+      previous,
+      current,
+      label: `${previous.label} → ${current.label}`,
+      shortLabel: `${previous.short} → ${current.short}`,
+    };
+  });
+
+  const LATEST_PERIOD = PERIODS[PERIODS.length - 1];
+  const LATEST_TRANSITION = TRANSITIONS[TRANSITIONS.length - 1];
+
+  function capitalize(value) {
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+
+  async function loadJson(path) {
     const response = await fetch(path);
-    if(!response.ok) throw new Error(`Gagal memuat ${path}: HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`Gagal memuat ${path}: HTTP ${response.status}`);
+    }
     return response.json();
   }
 
-  const [MEI, JUN, JUL] = await Promise.all([
-    loadJson('data-mei2026.json'),
-    loadJson('data-jun.json'),
-    loadJson('data-jul.json')
-  ]);
-  // fields: t=ticker, i=issuer, n=investor name, c=classification, lf=local/foreign, sh=shares, p=percentage
+  const loadedData = await Promise.all(PERIODS.map((period) => loadJson(period.file)));
+  PERIODS.forEach((period, index) => {
+    period.data = loadedData[index];
+    period.byTicker = Object.create(null);
+    period.byNorm = Object.create(null);
+  });
 
-  // ---------- Name normalization (mirrors the offline analysis) ----------
-  function normalize(name){
-    if(!name) return '';
-    let n = String(name).toUpperCase();
-    n = n.replace(/\(.*?\)/g, '');
-    n = n.replace(/[.,]/g, '');
-    n = n.replace(/\bTBK\b/g, '');
-    n = n.replace(/\bPT\b/g, '');
-    n = n.replace(/\bPERSERO\b/g, '');
-    n = n.replace(/\s+/g, ' ').trim();
-    return n;
+  // fields JSON: t=ticker, i=issuer, n=investor name,
+  // c=classification, lf=local/foreign, sh=shares, p=percentage.
+  function normalize(name) {
+    if (!name) return "";
+    return String(name)
+      .toUpperCase()
+      .replace(/\(.*?\)/g, "")
+      .replace(/[.,]/g, "")
+      .replace(/\bTBK\b/g, "")
+      .replace(/\bPT\b/g, "")
+      .replace(/\bPERSERO\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
-  // ---------- Build lookup structures ----------
-  // by ticker -> array of rows
-  const meiByTicker = {};
-  const junByTicker = {};
-  const julByTicker = {};
   const allTickers = new Set();
-  const issuerByTicker = {};
+  const issuerByTicker = Object.create(null);
 
-  MEI.forEach(r => {
-    r.norm = normalize(r.n);
-    (meiByTicker[r.t] = meiByTicker[r.t] || []).push(r);
-    allTickers.add(r.t);
-    issuerByTicker[r.t] = r.i;
-  });
-  JUN.forEach(r => {
-    r.norm = normalize(r.n);
-    (junByTicker[r.t] = junByTicker[r.t] || []).push(r);
-    allTickers.add(r.t);
-    issuerByTicker[r.t] = r.i;
-  });
-  JUL.forEach(r => {
-    r.norm = normalize(r.n);
-    (julByTicker[r.t] = julByTicker[r.t] || []).push(r);
-    allTickers.add(r.t);
-    issuerByTicker[r.t] = r.i;
+  PERIODS.forEach((period) => {
+    period.data.forEach((row) => {
+      row.norm = normalize(row.n);
+      (period.byTicker[row.t] ||= []).push(row);
+      (period.byNorm[row.norm] ||= []).push(row);
+      allTickers.add(row.t);
+      issuerByTicker[row.t] = row.i;
+    });
   });
 
-  // Investor index: normalized name -> list of {t, mei_row, jun_row, jul_row}
-  // We'll compute per-ticker diffs on demand and cache.
-  const diffCache = {};
-
-  function periodStatus(previous, current, renamed){
-    if(renamed) return 'ganti_nama';
-    if(previous && current){
-      const delta = +(current.p - previous.p).toFixed(2);
-      return Math.abs(delta) < 0.005 ? 'tetap' : (delta > 0 ? 'naik' : 'turun');
+  function periodStatus(previous, current, renamed = false, metric = "p") {
+    if (renamed) return "ganti_nama";
+    if (previous && current) {
+      const delta = Number(current[metric]) - Number(previous[metric]);
+      const tolerance = metric === "p" ? 0.005 : 0;
+      return Math.abs(delta) < tolerance || delta === 0
+        ? "tetap"
+        : delta > 0
+          ? "naik"
+          : "turun";
     }
-    if(!previous && current) return 'baru';
-    if(previous && !current) return 'keluar';
+    if (!previous && current) return "baru";
+    if (previous && !current) return "keluar";
     return null;
   }
 
-  function periodDelta(previous, current){
-    return previous && current ? +(current.p - previous.p).toFixed(2) : null;
+  function periodDelta(previous, current, metric = "p") {
+    if (!previous || !current) return null;
+    const delta = Number(current[metric]) - Number(previous[metric]);
+    return metric === "p" ? Number(delta.toFixed(2)) : delta;
   }
 
-  function periodShareStatus(previous, current){
-    if(previous && current){
-      const delta = current.sh - previous.sh;
-      return delta===0 ? 'tetap' : (delta>0 ? 'naik' : 'turun');
-    }
-    if(!previous && current) return 'baru';
-    if(previous && !current) return 'keluar';
-    return null;
-  }
-
-  function periodShareDelta(previous, current){
-    return previous && current ? current.sh - previous.sh : null;
-  }
-
-  function uniqueSamePercentage(rows, percentage, usedNorms){
-    const candidates = rows.filter(r =>
-      !usedNorms.has(r.norm) && r.p.toFixed(2) === percentage.toFixed(2)
+  function uniqueSamePercentage(rows, percentage, usedRows) {
+    const candidates = rows.filter(
+      (row) => !usedRows.has(row) && row.p.toFixed(2) === percentage.toFixed(2),
     );
     return candidates.length === 1 ? candidates[0] : null;
   }
 
-  function getTickerDiff(ticker){
-    if(diffCache[ticker]) return diffCache[ticker];
-    const meiRows = (meiByTicker[ticker] || []).slice().sort((a,b)=>b.p-a.p);
-    const junRows = (junByTicker[ticker] || []).slice().sort((a,b)=>b.p-a.p);
-    const julRows = (julByTicker[ticker] || []).slice().sort((a,b)=>b.p-a.p);
-    const meiByNorm = {};
-    const junByNorm = {};
-    meiRows.forEach(r => meiByNorm[r.norm] = r);
-    junRows.forEach(r => junByNorm[r.norm] = r);
-    const usedJunNorms = new Set();
-    const entities = [];
+  // =========================================================
+  // PENGGABUNGAN INVESTOR PER SAHAM UNTUK ENAM PERIODE
+  // Dimulai dari bulan terbaru lalu bergerak mundur.
+  // =========================================================
+  const diffCache = Object.create(null);
 
-    // Bentuk entitas utama dari Juli, lalu cocokkan ke Juni.
-    julRows.forEach(jul => {
-      let jun = junByNorm[jul.norm] || null;
-      let renamedJunJul = false;
-      if(!jun){
-        jun = uniqueSamePercentage(junRows, jul.p, usedJunNorms);
-        renamedJunJul = Boolean(jun);
-      }
-      if(jun) usedJunNorms.add(jun.norm);
-      entities.push({ jul, jun, may:null, renamedJunJul, renamedMayJun:false });
-    });
+  function getTickerDiff(ticker) {
+    if (diffCache[ticker]) return diffCache[ticker];
 
-    // Investor yang masih ada di Juni tetapi tidak ada di Juli.
-    junRows.forEach(jun => {
-      if(!usedJunNorms.has(jun.norm)){
-        usedJunNorms.add(jun.norm);
-        entities.push({ jul:null, jun, may:null, renamedJunJul:false, renamedMayJun:false });
-      }
-    });
+    const rowsByPeriod = Object.fromEntries(
+      PERIODS.map((period) => [
+        period.key,
+        (period.byTicker[ticker] || []).slice().sort((a, b) => b.p - a.p),
+      ]),
+    );
 
-    // Cocokkan setiap entitas ke data Mei.
-    const usedMeiNorms = new Set();
-    entities.forEach(entity => {
-      const referenceNorm = entity.jun ? entity.jun.norm : entity.jul.norm;
-      let may = meiByNorm[referenceNorm] || null;
-      if(may && usedMeiNorms.has(may.norm)) may = null;
-      if(!may && entity.jun){
-        may = uniqueSamePercentage(meiRows, entity.jun.p, usedMeiNorms);
-        entity.renamedMayJun = Boolean(may);
-      }
-      if(may){
-        usedMeiNorms.add(may.norm);
-        entity.may = may;
-      }
-    });
+    const latestRows = rowsByPeriod[LATEST_PERIOD.key];
+    const entities = latestRows.map((row) => ({
+      rows: { [LATEST_PERIOD.key]: row },
+      renamed: Object.create(null),
+    }));
 
-    // Investor yang hanya tercatat pada Mei tetap ditampilkan sebagai riwayat.
-    meiRows.forEach(may => {
-      if(!usedMeiNorms.has(may.norm)){
-        entities.push({ jul:null, jun:null, may, renamedJunJul:false, renamedMayJun:false });
-      }
-    });
+    for (let periodIndex = PERIODS.length - 2; periodIndex >= 0; periodIndex -= 1) {
+      const period = PERIODS[periodIndex];
+      const nextPeriod = PERIODS[periodIndex + 1];
+      const currentRows = rowsByPeriod[period.key];
+      const currentByNorm = Object.create(null);
+      currentRows.forEach((row) => {
+        (currentByNorm[row.norm] ||= []).push(row);
+      });
+      const usedRows = new Set();
 
-    const merged = entities.map(entity => {
-      const display = entity.jul || entity.jun || entity.may;
-      const deltaMayJun = periodDelta(entity.may, entity.jun);
-      const deltaJunJul = periodDelta(entity.jun, entity.jul);
-      const statusMayJun = periodStatus(entity.may, entity.jun, entity.renamedMayJun);
-      const statusJunJul = periodStatus(entity.jun, entity.jul, entity.renamedJunJul);
-      return {
+      entities.forEach((entity) => {
+        const nextRow = entity.rows[nextPeriod.key];
+        const nearestLaterRow = nextRow || PERIODS.slice(periodIndex + 1)
+          .map((candidate) => entity.rows[candidate.key])
+          .find(Boolean);
+        if (!nearestLaterRow) return;
+
+        let matched = (currentByNorm[nearestLaterRow.norm] || []).find(
+          (row) => !usedRows.has(row),
+        );
+        let renamed = false;
+
+        // Deteksi variasi/ganti nama hanya untuk pasangan bulan yang bersebelahan.
+        if (!matched && nextRow) {
+          matched = uniqueSamePercentage(currentRows, nextRow.p, usedRows);
+          renamed = Boolean(matched);
+        }
+
+        if (matched) {
+          entity.rows[period.key] = matched;
+          usedRows.add(matched);
+          if (renamed) entity.renamed[period.key + nextPeriod.key] = true;
+        }
+      });
+
+      currentRows.forEach((row) => {
+        if (!usedRows.has(row)) {
+          entities.push({ rows: { [period.key]: row }, renamed: Object.create(null) });
+        }
+      });
+    }
+
+    const merged = entities.map((entity) => {
+      const display = PERIODS.slice().reverse()
+        .map((period) => entity.rows[period.key])
+        .find(Boolean);
+      const result = {
         name: display.n,
         classification: display.c,
         lf: display.lf,
-        mayPct: entity.may ? entity.may.p : null,
-        junPct: entity.jun ? entity.jun.p : null,
-        julPct: entity.jul ? entity.jul.p : null,
-        deltaMayJun,
-        deltaJunJul,
-        statusMayJun,
-        statusJunJul,
-        // Alias berikut mempertahankan kompatibilitas ringkasan dan ticker tape terbaru.
-        delta: deltaJunJul,
-        status: statusJunJul,
-        shares: display.sh
       };
+
+      PERIODS.forEach((period) => {
+        const row = entity.rows[period.key];
+        result[`${period.key}Pct`] = row ? row.p : null;
+        result[`${period.key}Shares`] = row ? row.sh : null;
+      });
+
+      TRANSITIONS.forEach((transition) => {
+        const previous = entity.rows[transition.previous.key];
+        const current = entity.rows[transition.current.key];
+        const renamed = Boolean(entity.renamed[transition.key]);
+        result[`delta${transition.suffix}`] = periodDelta(previous, current, "p");
+        result[`status${transition.suffix}`] = periodStatus(previous, current, renamed, "p");
+        result[`shareDelta${transition.suffix}`] = periodDelta(previous, current, "sh");
+        result[`shareStatus${transition.suffix}`] = periodStatus(previous, current, renamed, "sh");
+      });
+
+      // Alias periode terbaru dipakai oleh ringkasan dan ticker tape.
+      result.status = result[`status${LATEST_TRANSITION.suffix}`];
+      result.delta = result[`delta${LATEST_TRANSITION.suffix}`];
+      return result;
     });
 
-    merged.sort((a,b) =>
-      (b.julPct ?? b.junPct ?? b.mayPct ?? -1) -
-      (a.julPct ?? a.junPct ?? a.mayPct ?? -1)
-    );
+    const latestPctKey = `${LATEST_PERIOD.key}Pct`;
+    merged.sort((a, b) => {
+      const aValue = PERIODS.slice().reverse()
+        .map((period) => a[`${period.key}Pct`])
+        .find((value) => value != null) ?? -1;
+      const bValue = PERIODS.slice().reverse()
+        .map((period) => b[`${period.key}Pct`])
+        .find((value) => value != null) ?? -1;
+      return (b[latestPctKey] ?? bValue) - (a[latestPctKey] ?? aValue);
+    });
+
     const result = { ticker, issuer: issuerByTicker[ticker], rows: merged };
     diffCache[ticker] = result;
     return result;
   }
 
-  // ---------- Precompute market-wide movers (for ticker tape + overview) ----------
+  // =========================================================
+  // RINGKASAN PASAR: memakai pasangan periode terbaru.
+  // =========================================================
   let marketStats = null;
-  function computeMarketStats(){
-    if(marketStats) return marketStats;
-    let newCount=0, exitCount=0, changedCount=0;
-    const bigNew = [], bigExit = [], bigChange = [];
-    allTickers.forEach(t => {
-      const d = getTickerDiff(t);
-      d.rows.forEach(r => {
-        if(r.status==='baru'){ newCount++; bigNew.push({t, issuer:d.issuer, name:r.name, pct:r.julPct}); }
-        else if(r.status==='keluar'){ exitCount++; bigExit.push({t, issuer:d.issuer, name:r.name, pct:r.junPct}); }
-        else if((r.status==='naik'||r.status==='turun') && Math.abs(r.delta) >= 0.5){
-          changedCount++; bigChange.push({t, issuer:d.issuer, name:r.name, delta:r.delta, julPct:r.julPct});
+
+  function computeMarketStats() {
+    if (marketStats) return marketStats;
+    let newCount = 0;
+    let exitCount = 0;
+    let changedCount = 0;
+    const bigNew = [];
+    const bigExit = [];
+    const bigChange = [];
+    const latestPctKey = `${LATEST_PERIOD.key}Pct`;
+    const previousPctKey = `${LATEST_TRANSITION.previous.key}Pct`;
+
+    allTickers.forEach((ticker) => {
+      const detail = getTickerDiff(ticker);
+      detail.rows.forEach((row) => {
+        if (row.status === "baru") {
+          newCount += 1;
+          bigNew.push({ ticker, name: row.name, pct: row[latestPctKey] });
+        } else if (row.status === "keluar") {
+          exitCount += 1;
+          bigExit.push({ ticker, name: row.name, pct: row[previousPctKey] });
+        } else if (
+          (row.status === "naik" || row.status === "turun") &&
+          Math.abs(row.delta) >= 0.5
+        ) {
+          changedCount += 1;
+          bigChange.push({ ticker, name: row.name, delta: row.delta });
         }
       });
     });
-    bigNew.sort((a,b)=>b.pct-a.pct);
-    bigExit.sort((a,b)=>b.pct-a.pct);
-    bigChange.sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));
+
+    bigNew.sort((a, b) => b.pct - a.pct);
+    bigExit.sort((a, b) => b.pct - a.pct);
+    bigChange.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+    const previousByTicker = LATEST_TRANSITION.previous.byTicker;
+    const latestByTicker = LATEST_PERIOD.byTicker;
     marketStats = {
-      newCount, exitCount, changedCount,
-      newTickers: [...allTickers].filter(t=>!junByTicker[t] && julByTicker[t]).sort(),
-      goneTickers: [...allTickers].filter(t=>junByTicker[t] && !julByTicker[t]).sort(),
-      bigNew, bigExit, bigChange
+      newCount,
+      exitCount,
+      changedCount,
+      bigNew,
+      bigExit,
+      bigChange,
+      newTickers: [...allTickers].filter(
+        (ticker) => !previousByTicker[ticker] && latestByTicker[ticker],
+      ).sort(),
     };
     return marketStats;
   }
 
-  // ---------- Per-ticker screening aggregates ----------
-  let screenData = null;
-  function computeScreenData(){
-    if(screenData) return screenData;
-    screenData = [...allTickers].map(t => {
-      const d = getTickerDiff(t);
-      let newJun=0, upJun=0, downJun=0, exitJun=0;
-      let newJul=0, upJul=0, downJul=0, exitJul=0;
-      d.rows.forEach(r=>{
-        if(r.statusMayJun==='baru') newJun++;
-        else if(r.statusMayJun==='keluar') exitJun++;
-        else if(r.statusMayJun==='naik') upJun++;
-        else if(r.statusMayJun==='turun') downJun++;
+  // =========================================================
+  // SCREENING: enam total bulanan + empat metrik per transisi.
+  // =========================================================
+  const totalField = (period) => `total${capitalize(period.key)}`;
+  const metricField = (metric, transition) => `${metric}${transition.suffix}`;
 
-        if(r.statusJunJul==='baru') newJul++;
-        else if(r.statusJunJul==='keluar') exitJul++;
-        else if(r.statusJunJul==='naik') upJul++;
-        else if(r.statusJunJul==='turun') downJul++;
+  const SCREEN_GROUPS = [];
+  PERIODS.forEach((period, index) => {
+    SCREEN_GROUPS.push({
+      label: period.label,
+      cols: [{
+        key: totalField(period),
+        label: "Total >1%",
+        sortLabel: `Total pemegang >1% ${period.label}`,
+        cls: "cell-total",
+      }],
+    });
+    if (index < TRANSITIONS.length) {
+      const transition = TRANSITIONS[index];
+      SCREEN_GROUPS.push({
+        label: `Perubahan ${transition.shortLabel}`,
+        cols: [
+          { key: metricField("new", transition), label: "Baru", sortLabel: `Investor baru ${transition.current.label}`, cls: "cell-new" },
+          { key: metricField("up", transition), label: "Nambah", sortLabel: `Nambah kepemilikan ${transition.label}`, cls: "cell-up" },
+          { key: metricField("down", transition), label: "Kurangi", sortLabel: `Kurangi kepemilikan ${transition.label}`, cls: "cell-down" },
+          { key: metricField("exit", transition), label: "Keluar", sortLabel: `Investor keluar ${transition.current.label}`, cls: "cell-exit" },
+        ],
       });
-      return {
-        ticker:t, issuer:d.issuer,
-        totalMay: d.rows.filter(r=>r.mayPct!=null).length,
-        newJun, upJun, downJun, exitJun,
-        totalJun: d.rows.filter(r=>r.junPct!=null).length,
-        newJul, upJul, downJul, exitJul,
-        totalJul: d.rows.filter(r=>r.julPct!=null).length
-      };
+    }
+  });
+  const SCREEN_COLS = SCREEN_GROUPS.flatMap((group) => group.cols);
+  let screenSortKey = totalField(LATEST_PERIOD);
+  let screenSortDir = "desc";
+  let screenShowAll = false;
+  let screenData = null;
+
+  function computeScreenData() {
+    if (screenData) return screenData;
+    screenData = [...allTickers].map((ticker) => {
+      const detail = getTickerDiff(ticker);
+      const result = { ticker, issuer: detail.issuer };
+      PERIODS.forEach((period) => {
+        result[totalField(period)] = detail.rows.filter(
+          (row) => row[`${period.key}Pct`] != null,
+        ).length;
+      });
+      TRANSITIONS.forEach((transition) => {
+        const statusKey = `status${transition.suffix}`;
+        result[metricField("new", transition)] = 0;
+        result[metricField("up", transition)] = 0;
+        result[metricField("down", transition)] = 0;
+        result[metricField("exit", transition)] = 0;
+        detail.rows.forEach((row) => {
+          if (row[statusKey] === "baru") result[metricField("new", transition)] += 1;
+          else if (row[statusKey] === "naik") result[metricField("up", transition)] += 1;
+          else if (row[statusKey] === "turun") result[metricField("down", transition)] += 1;
+          else if (row[statusKey] === "keluar") result[metricField("exit", transition)] += 1;
+        });
+      });
+      return result;
     });
     return screenData;
   }
 
-  const SCREEN_GROUPS = [
-    {
-      label:'Mei 2026',
-      cols:[
-        {key:'totalMay', label:'Total &gt;1%', sortLabel:'Total pemegang &gt;1% Mei 2026', cls:'cell-total'},
-      ]
-    },
-    {
-      label:'Perubahan Mei → Juni',
-      cols:[
-        {key:'newJun', label:'Baru', sortLabel:'Investor baru Juni 2026', cls:'cell-new'},
-        {key:'upJun', label:'Nambah', sortLabel:'Nambah kepemilikan Mei → Juni', cls:'cell-up'},
-        {key:'downJun', label:'Kurangi', sortLabel:'Kurangi kepemilikan Mei → Juni', cls:'cell-down'},
-        {key:'exitJun', label:'Keluar', sortLabel:'Investor keluar Juni 2026', cls:'cell-exit'},
-      ]
-    },
-    {
-      label:'Juni 2026',
-      cols:[
-        {key:'totalJun', label:'Total &gt;1%', sortLabel:'Total pemegang &gt;1% Juni 2026', cls:'cell-total'},
-      ]
-    },
-    {
-      label:'Perubahan Juni → Juli',
-      cols:[
-        {key:'newJul', label:'Baru', sortLabel:'Investor baru Juli 2026', cls:'cell-new'},
-        {key:'upJul', label:'Nambah', sortLabel:'Nambah kepemilikan Juni → Juli', cls:'cell-up'},
-        {key:'downJul', label:'Kurangi', sortLabel:'Kurangi kepemilikan Juni → Juli', cls:'cell-down'},
-        {key:'exitJul', label:'Keluar', sortLabel:'Investor keluar Juli 2026', cls:'cell-exit'},
-      ]
-    },
-    {
-      label:'Juli 2026',
-      cols:[
-        {key:'totalJul', label:'Total &gt;1%', sortLabel:'Total pemegang &gt;1% Juli 2026', cls:'cell-total'},
-      ]
-    },
-  ];
-  const SCREEN_COLS = SCREEN_GROUPS.flatMap(group=>group.cols);
-  let screenSortKey = 'totalJul';
-  let screenSortDir = 'desc';
-  let screenShowAll = false;
+  // =========================================================
+  // STATE DAN HELPER TAMPILAN
+  // =========================================================
+  const tickerSortState = Object.create(null);
+  const investorSortState = Object.create(null);
+  const mainArea = document.getElementById("mainArea");
+  const searchInput = document.getElementById("searchInput");
+  const clearBtn = document.getElementById("clearBtn");
+  const hintRow = document.getElementById("hintRow");
+  const tabBtns = document.querySelectorAll(".tab-btn");
+  let mode = "saham";
 
-  // Tiap kartu saham menyimpan pilihan sort-nya sendiri.
-  const tickerSortState = {};
+  const integerFormatter = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 });
 
-  // Tiap kartu investor juga menyimpan pilihan sort bulan secara mandiri.
-  const investorSortState = {};
-
-  // ---------- Rendering helpers ----------
-  const mainArea = document.getElementById('mainArea');
-  const searchInput = document.getElementById('searchInput');
-  const clearBtn = document.getElementById('clearBtn');
-  const hintRow = document.getElementById('hintRow');
-  const tabBtns = document.querySelectorAll('.tab-btn');
-  let mode = 'saham';
-
-  const integerFormatter = new Intl.NumberFormat('id-ID', {maximumFractionDigits:0});
-
-  function fmtPct(p){ return p==null ? '—' : p.toFixed(2)+'%'; }
-  function fmtShares(shares){
-    return shares==null ? '—' : integerFormatter.format(shares)+' saham';
+  function fmtPct(value) {
+    return value == null ? "—" : `${value.toFixed(2)}%`;
   }
-  function fmtShareDelta(delta){
-    if(delta==null) return '';
-    const sign = delta>0 ? '+' : (delta<0 ? '−' : '');
-    return sign+integerFormatter.format(Math.abs(delta))+' saham';
+
+  function fmtShares(value) {
+    return value == null ? "—" : `${integerFormatter.format(value)} saham`;
   }
-  function fmtDelta(d){
-    if(d==null) return '';
-    const sign = d>0 ? '+' : '';
-    return sign+d.toFixed(2)+' pp';
+
+  function fmtDelta(value) {
+    if (value == null) return "";
+    return `${value > 0 ? "+" : ""}${value.toFixed(2)} pp`;
   }
-  function deltaClass(d){
-    if(d==null) return 'delta-flat';
-    if(Math.abs(d) < 0.005) return 'delta-flat';
-    return d>0 ? 'delta-up' : 'delta-down';
+
+  function fmtShareDelta(value) {
+    if (value == null) return "";
+    const sign = value > 0 ? "+" : value < 0 ? "−" : "";
+    return `${sign}${integerFormatter.format(Math.abs(value))} saham`;
   }
-  function statusChip(status){
-    switch(status){
-      case 'baru': return '<span class="status-chip status-baru">BARU</span>';
-      case 'keluar': return '<span class="status-chip status-keluar">KELUAR</span>';
-      case 'naik': return '<span class="status-chip status-naik">▲ naik</span>';
-      case 'turun': return '<span class="status-chip status-turun">▼ turun</span>';
-      case 'ganti_nama': return '<span class="status-chip status-tetap">ganti nama</span>';
-      case 'tetap': return '<span class="status-chip status-tetap">tetap</span>';
+
+  function deltaClass(value) {
+    if (value == null || Math.abs(value) < 0.005) return "delta-flat";
+    return value > 0 ? "delta-up" : "delta-down";
+  }
+
+  function statusChip(status) {
+    switch (status) {
+      case "baru": return '<span class="status-chip status-baru">BARU</span>';
+      case "keluar": return '<span class="status-chip status-keluar">KELUAR</span>';
+      case "naik": return '<span class="status-chip status-naik">▲ naik</span>';
+      case "turun": return '<span class="status-chip status-turun">▼ turun</span>';
+      case "ganti_nama": return '<span class="status-chip status-tetap">ganti nama</span>';
+      case "tetap": return '<span class="status-chip status-tetap">tetap</span>';
       default: return '<span class="status-chip status-tetap">—</span>';
     }
   }
 
-  function transitionCell(delta, status){
-    if(!status) return statusChip(null);
-    if(status==='baru' || status==='keluar' || status==='ganti_nama'){
+  function transitionCell(delta, status, sharesView = false) {
+    if (!status) return statusChip(null);
+    if (status === "baru" || status === "keluar" || status === "ganti_nama") {
       return statusChip(status);
     }
-    return fmtDelta(delta)+' '+statusChip(status);
+    const formatted = sharesView ? fmtShareDelta(delta) : fmtDelta(delta);
+    return `${formatted} ${statusChip(status)}`;
   }
 
-  function shareTransitionCell(delta, status){
-    if(!status) return statusChip(null);
-    if(status==='baru' || status==='keluar') return statusChip(status);
-    return fmtShareDelta(delta)+' '+statusChip(status);
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character]);
   }
 
-  function getTickerSortState(ticker){
-    return tickerSortState[ticker] || {key:'julPct', dir:'desc'};
-  }
-
-  function sortRowsByNumber(rows, key, dir){
-    return rows.slice().sort((a,b)=>{
+  function sortRowsByNumber(rows, key, direction) {
+    return rows.slice().sort((a, b) => {
       const aValue = a[key];
       const bValue = b[key];
-      const aEmpty = aValue==null || Number.isNaN(aValue);
-      const bEmpty = bValue==null || Number.isNaN(bValue);
-
-      // Nilai kosong selalu berada di bawah, baik sort naik maupun turun.
-      if(aEmpty && bEmpty) return a.name.localeCompare(b.name, 'id');
-      if(aEmpty) return 1;
-      if(bEmpty) return -1;
-
-      const numericDiff = dir==='desc' ? bValue-aValue : aValue-bValue;
-      return numericDiff || a.name.localeCompare(b.name, 'id');
+      const aEmpty = aValue == null || Number.isNaN(aValue);
+      const bEmpty = bValue == null || Number.isNaN(bValue);
+      if (aEmpty && bEmpty) return String(a.name).localeCompare(String(b.name), "id");
+      if (aEmpty) return 1;
+      if (bEmpty) return -1;
+      const difference = direction === "desc" ? bValue - aValue : aValue - bValue;
+      return difference || String(a.name).localeCompare(String(b.name), "id");
     });
   }
 
-  function tickerSortHeader(ticker, key, label){
-    const state = getTickerSortState(ticker);
-    const sorted = state.key===key;
-    const arrow = sorted ? (state.dir==='desc' ? '▼' : '▲') : '↕';
-    const ariaSort = sorted ? (state.dir==='desc' ? 'descending' : 'ascending') : 'none';
-    return `<th class="text-right${sorted?' sorted':''}" scope="col" aria-sort="${ariaSort}">
-      <button type="button" class="table-sort-btn ticker-sort-btn" data-ticker="${ticker}" data-key="${key}" aria-label="Urutkan ${label}">
-        <span>${label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
-      </button>
-    </th>`;
+  function getTickerSortState(ticker) {
+    return tickerSortState[ticker] || { key: `${LATEST_PERIOD.key}Pct`, dir: "desc" };
   }
 
-  function getInvestorSortState(norm, view='percentage'){
+  function getInvestorSortState(norm, view) {
     const stateKey = `${view}:${norm}`;
-    const defaultKey = view==='shares' ? 'julShares' : 'julPct';
-    return investorSortState[stateKey] || {key:defaultKey, dir:'desc'};
+    const suffix = view === "shares" ? "Shares" : "Pct";
+    return investorSortState[stateKey] || {
+      key: `${LATEST_PERIOD.key}${suffix}`,
+      dir: "desc",
+    };
   }
 
-  function investorSortHeader(norm, key, label, view='percentage'){
-    const state = getInvestorSortState(norm, view);
-    const sorted = state.key===key;
-    const arrow = sorted ? (state.dir==='desc' ? '▼' : '▲') : '↕';
-    const ariaSort = sorted ? (state.dir==='desc' ? 'descending' : 'ascending') : 'none';
-    const investorKey = encodeURIComponent(norm);
-    const isChangeColumn = key.toLowerCase().includes('delta');
-    const metricLabel = isChangeColumn
-      ? (view==='shares' ? 'perubahan jumlah saham' : 'perubahan persentase')
-      : (view==='shares' ? 'total saham' : 'persentase kepemilikan');
-    return `<th class="text-right${sorted?' sorted':''}" scope="col" aria-sort="${ariaSort}">
-      <button type="button" class="table-sort-btn investor-sort-btn" data-investor-key="${investorKey}" data-view="${view}" data-key="${key}" aria-label="Urutkan ${metricLabel} ${label}">
-        <span>${label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
+  function sortHeader({ owner, ownerValue, key, label, state, view = "percentage" }) {
+    const sorted = state.key === key;
+    const arrow = sorted ? (state.dir === "desc" ? "▼" : "▲") : "↕";
+    const ariaSort = sorted ? (state.dir === "desc" ? "descending" : "ascending") : "none";
+    const ownerAttribute = owner === "ticker"
+      ? `data-ticker="${ownerValue}"`
+      : `data-investor-key="${encodeURIComponent(ownerValue)}" data-view="${view}"`;
+    const buttonClass = owner === "ticker" ? "ticker-sort-btn" : "investor-sort-btn";
+    return `<th class="text-right${sorted ? " sorted" : ""}" scope="col" aria-sort="${ariaSort}">
+      <button type="button" class="table-sort-btn ${buttonClass}" ${ownerAttribute} data-key="${key}" aria-label="Urutkan ${escapeHtml(label)}">
+        <span>${escapeHtml(label)}</span><span class="arrow" aria-hidden="true">${arrow}</span>
       </button>
     </th>`;
   }
 
-  function renderTickerCard(ticker){
-    const d = getTickerDiff(ticker);
-    if(!d.rows.length) return '';
-    const newN = d.rows.filter(r=>r.statusJunJul==='baru').length;
-    const exitN = d.rows.filter(r=>r.statusJunJul==='keluar').length;
-    let badges = '';
-    if(newN) badges += `<span class="badge badge-new">+${newN} BARU DI JULI</span>`;
-    if(exitN) badges += `<span class="badge badge-exit">-${exitN} KELUAR DI JULI</span>`;
+  // =========================================================
+  // CARI SAHAM
+  // =========================================================
+  function renderTickerCard(ticker) {
+    const detail = getTickerDiff(ticker);
+    if (!detail.rows.length) return "";
+    const latestStatusKey = `status${LATEST_TRANSITION.suffix}`;
+    const newCount = detail.rows.filter((row) => row[latestStatusKey] === "baru").length;
+    const exitCount = detail.rows.filter((row) => row[latestStatusKey] === "keluar").length;
+    const badges = [
+      newCount ? `<span class="badge badge-new">+${newCount} BARU DI ${LATEST_PERIOD.short.toUpperCase()}</span>` : "",
+      exitCount ? `<span class="badge badge-exit">-${exitCount} KELUAR DI ${LATEST_PERIOD.short.toUpperCase()}</span>` : "",
+    ].join("");
 
     const sortState = getTickerSortState(ticker);
-    const sortedRows = sortRowsByNumber(d.rows, sortState.key, sortState.dir);
-    let rows = sortedRows.map(r => {
-      const rowClass = r.statusJunJul==='baru' ? 'row-new' : (r.statusJunJul==='keluar' ? 'row-exit' : '');
-      return `<tr class="${rowClass}">
-        <td><div class="r-name">${escapeHtml(r.name)}</div></td>
-        <td class="r-class">${escapeHtml(r.classification||'—')}${r.lf?` &middot; ${r.lf==='L'?'Lokal':'Asing'}`:''}</td>
-        <td class="r-pct">${fmtPct(r.mayPct)}</td>
-        <td class="r-pct">${fmtPct(r.junPct)}</td>
-        <td class="r-pct">${fmtPct(r.julPct)}</td>
-        <td class="r-delta ${deltaClass(r.deltaMayJun)}">${transitionCell(r.deltaMayJun, r.statusMayJun)}</td>
-        <td class="r-delta ${deltaClass(r.deltaJunJul)}">${transitionCell(r.deltaJunJul, r.statusJunJul)}</td>
-      </tr>`;
-    }).join('');
+    const rows = sortRowsByNumber(detail.rows, sortState.key, sortState.dir)
+      .map((row) => {
+        const latestStatus = row[latestStatusKey];
+        const rowClass = latestStatus === "baru" ? "row-new" : latestStatus === "keluar" ? "row-exit" : "";
+        const periodCells = PERIODS.map(
+          (period) => `<td class="r-pct">${fmtPct(row[`${period.key}Pct`])}</td>`,
+        ).join("");
+        const transitionCells = TRANSITIONS.map((transition) => {
+          const delta = row[`delta${transition.suffix}`];
+          const status = row[`status${transition.suffix}`];
+          return `<td class="r-delta ${deltaClass(delta)}">${transitionCell(delta, status)}</td>`;
+        }).join("");
+        return `<tr class="${rowClass}">
+          <td><div class="r-name">${escapeHtml(row.name)}</div></td>
+          <td class="r-class">${escapeHtml(row.classification || "—")}${row.lf ? ` &middot; ${row.lf === "L" ? "Lokal" : "Asing"}` : ""}</td>
+          ${periodCells}${transitionCells}
+        </tr>`;
+      }).join("");
+
+    const periodHeaders = PERIODS.map((period) => sortHeader({
+      owner: "ticker",
+      ownerValue: ticker,
+      key: `${period.key}Pct`,
+      label: period.label,
+      state: sortState,
+    })).join("");
+    const transitionHeaders = TRANSITIONS.map((transition) => sortHeader({
+      owner: "ticker",
+      ownerValue: ticker,
+      key: `delta${transition.suffix}`,
+      label: transition.label,
+      state: sortState,
+    })).join("");
 
     return `<div class="result-card">
       <div class="result-head">
-        <div>
-          <div class="rh-ticker">${ticker}</div>
-          <div class="rh-issuer">${escapeHtml(d.issuer||'')}</div>
-        </div>
+        <div><div class="rh-ticker">${ticker}</div><div class="rh-issuer">${escapeHtml(detail.issuer || "")}</div></div>
         <div class="rh-badges">${badges}</div>
       </div>
-      <div class="table-scroll" role="region" aria-label="Tabel kepemilikan saham" tabindex="0">
-      <table class="hold-table">
-        <thead><tr>
-          <th>Investor</th>
-          <th class="r-class">Klasifikasi</th>
-          ${tickerSortHeader(ticker, 'mayPct', 'Mei 2026')}
-          ${tickerSortHeader(ticker, 'junPct', 'Juni 2026')}
-          ${tickerSortHeader(ticker, 'julPct', 'Juli 2026')}
-          ${tickerSortHeader(ticker, 'deltaMayJun', 'Mei→Juni')}
-          ${tickerSortHeader(ticker, 'deltaJunJul', 'Juni→Juli')}
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="table-scroll" role="region" aria-label="Tabel kepemilikan ${ticker}" tabindex="0">
+        <table class="hold-table ticker-hold-table">
+          <thead><tr><th>Investor</th><th class="r-class">Klasifikasi</th>${periodHeaders}${transitionHeaders}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
       </div>
     </div>`;
   }
 
-  function wireTickerSortControls(){
-    mainArea.querySelectorAll('.ticker-sort-btn[data-ticker][data-key]').forEach(button=>{
-      button.addEventListener('click', event=>{
+  function wireTickerSortControls() {
+    mainArea.querySelectorAll(".ticker-sort-btn[data-ticker][data-key]").forEach((button) => {
+      button.addEventListener("click", (event) => {
         event.stopPropagation();
         const ticker = button.dataset.ticker;
         const key = button.dataset.key;
         const current = getTickerSortState(ticker);
         tickerSortState[ticker] = {
           key,
-          dir: current.key===key && current.dir==='desc' ? 'asc' : 'desc'
+          dir: current.key === key && current.dir === "desc" ? "asc" : "desc",
         };
         renderTickerResults(searchInput.value.trim());
       });
     });
   }
 
-  function escapeHtml(s){
-    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
-
-  function renderOverview(){
-    const s = computeMarketStats();
-    const tickerCount = allTickers.size;
-    let html = `
-      <div class="section-title">Ringkasan Periode Terbaru (Juni → Juli 2026)</div>
-      <div class="stat-grid">
-        <div class="stat-card"><div class="stat-num">${tickerCount}</div><div class="stat-label">Total saham tercakup</div></div>
-        <div class="stat-card"><div class="stat-num gold">${s.newCount}</div><div class="stat-label">Investor baru (&gt;1%)</div></div>
-        <div class="stat-card"><div class="stat-num neg">${s.exitCount}</div><div class="stat-label">Investor keluar</div></div>
-        <div class="stat-card"><div class="stat-num">${s.changedCount}</div><div class="stat-label">Perubahan signifikan (&ge;0.5pp)</div></div>
-      </div>
-      <div class="section-title">Pergerakan Terbesar</div>
-      <div class="mover-grid">
-        <div class="mover-card new">
-          <h3>⬤ Investor Baru Terbesar</h3>
-          ${s.bigNew.slice(0,8).map(m=>`
-            <div class="mover-row" data-ticker="${m.t}">
-              <div class="mover-left">
-                <div class="mover-ticker">${m.t}</div>
-                <div class="mover-name">${escapeHtml(m.name)}</div>
-              </div>
-              <div class="mover-pct" style="color:var(--positive)">${fmtPct(m.pct)}</div>
-            </div>`).join('')}
-        </div>
-        <div class="mover-card exit">
-          <h3>⬤ Investor Keluar Terbesar</h3>
-          ${s.bigExit.slice(0,8).map(m=>`
-            <div class="mover-row" data-ticker="${m.t}">
-              <div class="mover-left">
-                <div class="mover-ticker">${m.t}</div>
-                <div class="mover-name">${escapeHtml(m.name)}</div>
-              </div>
-              <div class="mover-pct" style="color:var(--negative)">${fmtPct(m.pct)}</div>
-            </div>`).join('')}
-        </div>
-      </div>
-      ${s.newTickers.length ? `
-      <div class="section-title">Saham Baru Muncul di Juli</div>
-      <div class="mover-card new">
-        ${s.newTickers.map(t=>`
-          <div class="mover-row" data-ticker="${t}">
-            <div class="mover-left">
-              <div class="mover-ticker">${t}</div>
-              <div class="mover-name">${escapeHtml(issuerByTicker[t]||'')}</div>
-            </div>
-            <div class="mover-pct" style="color:var(--gold)">lihat →</div>
-          </div>`).join('')}
-      </div>` : ''}
-      <p class="foot-note">Tabel detail menampilkan data berurutan dari Mei, Juni, lalu Juli 2026. Screening menyediakan metrik terpisah untuk Mei → Juni dan Juni → Juli, sedangkan ringkasan serta ticker pergerakan memakai periode terbaru, yaitu Juni → Juli 2026. Nama investor dinormalisasi (menghapus "PT", "Tbk", tanda baca, dan kata dalam kurung) agar variasi penulisan nama tidak keliru dihitung sebagai investor baru. Data: KSEI, pemegang saham &gt;1%, Mei–Juli 2026.</p>
-    `;
-    mainArea.innerHTML = html;
-    mainArea.querySelectorAll('.mover-row[data-ticker]').forEach(el=>{
-      el.addEventListener('click', ()=>{
-        searchInput.value = el.getAttribute('data-ticker');
-        mode = 'saham';
-        setActiveTab();
-        runSearch();
-      });
+  function renderTickerResults(query) {
+    const normalizedQuery = query.trim().toUpperCase();
+    let matches = [...allTickers].filter(
+      (ticker) => ticker.includes(normalizedQuery) ||
+        (issuerByTicker[ticker] || "").toUpperCase().includes(normalizedQuery),
+    );
+    matches.sort((a, b) => {
+      const exactDifference = (a === normalizedQuery ? 0 : 1) - (b === normalizedQuery ? 0 : 1);
+      return exactDifference || a.localeCompare(b);
     });
-  }
-
-  function renderTickerResults(query){
-    const q = query.trim().toUpperCase();
-    let matches = [...allTickers].filter(t => t.includes(q) || (issuerByTicker[t]||'').toUpperCase().includes(q));
-    matches.sort((a,b)=>{
-      const aExact = a===q ? 0 : 1, bExact = b===q ? 0 : 1;
-      if(aExact!==bExact) return aExact-bExact;
-      return a.localeCompare(b);
-    });
-    if(!matches.length){
-      mainArea.innerHTML = emptyState('Tidak ada saham yang cocok dengan "'+escapeHtml(query)+'".');
+    if (!matches.length) {
+      mainArea.innerHTML = emptyState(`Tidak ada saham yang cocok dengan "${escapeHtml(query)}".`);
       return;
     }
     matches = matches.slice(0, 25);
-    mainArea.innerHTML = `<div class="section-title">${matches.length} saham ditemukan</div>` + matches.map(renderTickerCard).join('');
+    mainArea.innerHTML = `<div class="section-title">${matches.length} saham ditemukan</div>${matches.map(renderTickerCard).join("")}`;
     wireTickerSortControls();
   }
 
-  function renderInvestorResults(query, view='percentage'){
-    const isSharesView = view==='shares';
-    const q = normalize(query);
-    if(!q){
-      mainArea.innerHTML = emptyState('Ketik nama investor untuk mulai pencarian, mis. "TASPEN" atau "BAKRIE".');
-      return;
-    }
-    // gather all normalized names matching across all three months
-    const namesMap = {}; // norm -> display name
-    MEI.forEach(r=>{ if(r.norm.includes(q)) namesMap[r.norm]=r.n; });
-    JUN.forEach(r=>{ if(r.norm.includes(q)) namesMap[r.norm]=r.n; });
-    JUL.forEach(r=>{ if(r.norm.includes(q)) namesMap[r.norm]=r.n; });
-    const normNames = Object.keys(namesMap);
-    if(!normNames.length){
-      mainArea.innerHTML = emptyState('Tidak ada investor yang cocok dengan "'+escapeHtml(query)+'".');
-      return;
-    }
-    const metricName = isSharesView ? 'total holding shares' : 'persentase kepemilikan';
-    const modeTitle = isSharesView ? 'Investor by Shares' : 'Cari Investor';
-    let html = `<div class="section-title">${normNames.length} investor cocok · ${modeTitle}</div>
-      <p class="investor-search-note">Klik header Mei 2026, Juni 2026, Juli 2026, Mei 2026 → Juni 2026, atau Juni 2026 → Juli 2026 untuk mengurutkan ${metricName} dan perubahannya. Urutan awal menggunakan Juli 2026 dari terbesar ke terkecil; nilai kosong selalu ditempatkan paling bawah.${isSharesView?' Angka ditampilkan sebagai jumlah lembar saham dengan pemisah ribuan format Indonesia.':''}</p>`;
-    normNames.slice(0,15).forEach(norm=>{
-      const meiRows = MEI.filter(r=>r.norm===norm);
-      const junRows = JUN.filter(r=>r.norm===norm);
-      const julRows = JUL.filter(r=>r.norm===norm);
-      const tickers = new Set([
-        ...meiRows.map(r=>r.t),
-        ...junRows.map(r=>r.t),
-        ...julRows.map(r=>r.t)
-      ]);
-      const holdings = [...tickers].map(t=>{
-        const mr = meiRows.find(r=>r.t===t);
-        const jr = junRows.find(r=>r.t===t);
-        const jl = julRows.find(r=>r.t===t);
-        return {
-          name:t,
-          ticker:t,
-          issuer:issuerByTicker[t]||'',
-          mayPct:mr ? mr.p : null,
-          junPct:jr ? jr.p : null,
-          julPct:jl ? jl.p : null,
-          mayShares:mr ? mr.sh : null,
-          junShares:jr ? jr.sh : null,
-          julShares:jl ? jl.sh : null,
-          deltaMayJun:periodDelta(mr, jr),
-          deltaJunJul:periodDelta(jr, jl),
-          statusMayJun:periodStatus(mr, jr, false),
-          statusJunJul:periodStatus(jr, jl, false),
-          shareDeltaMayJun:periodShareDelta(mr, jr),
-          shareDeltaJunJul:periodShareDelta(jr, jl),
-          shareStatusMayJun:periodShareStatus(mr, jr),
-          shareStatusJunJul:periodShareStatus(jr, jl)
-        };
+  // =========================================================
+  // CARI INVESTOR: PERCENTAGE DAN TOTAL HOLDING SHARES
+  // =========================================================
+  function buildInvestorHoldings(norm) {
+    const rowsForPeriod = Object.fromEntries(
+      PERIODS.map((period) => [period.key, period.byNorm[norm] || []]),
+    );
+    const tickers = new Set(
+      PERIODS.flatMap((period) => rowsForPeriod[period.key].map((row) => row.t)),
+    );
+    const holdings = [...tickers].map((ticker) => {
+      const result = {
+        name: ticker,
+        ticker,
+        issuer: issuerByTicker[ticker] || "",
+      };
+      const matchedRows = Object.create(null);
+      PERIODS.forEach((period) => {
+        const row = rowsForPeriod[period.key].find((candidate) => candidate.t === ticker);
+        matchedRows[period.key] = row || null;
+        result[`${period.key}Pct`] = row ? row.p : null;
+        result[`${period.key}Shares`] = row ? row.sh : null;
       });
+      TRANSITIONS.forEach((transition) => {
+        const previous = matchedRows[transition.previous.key];
+        const current = matchedRows[transition.current.key];
+        result[`delta${transition.suffix}`] = periodDelta(previous, current, "p");
+        result[`status${transition.suffix}`] = periodStatus(previous, current, false, "p");
+        result[`shareDelta${transition.suffix}`] = periodDelta(previous, current, "sh");
+        result[`shareStatus${transition.suffix}`] = periodStatus(previous, current, false, "sh");
+      });
+      return result;
+    });
+    return { holdings, tickerCount: tickers.size };
+  }
+
+  function renderInvestorResults(query, view = "percentage") {
+    const sharesView = view === "shares";
+    const normalizedQuery = normalize(query);
+    if (!normalizedQuery) {
+      mainArea.innerHTML = emptyState('Ketik nama investor, misalnya "TASPEN" atau "BAKRIE".');
+      return;
+    }
+
+    const namesMap = Object.create(null);
+    PERIODS.forEach((period) => {
+      period.data.forEach((row) => {
+        if (row.norm.includes(normalizedQuery)) namesMap[row.norm] = row.n;
+      });
+    });
+    const normNames = Object.keys(namesMap);
+    if (!normNames.length) {
+      mainArea.innerHTML = emptyState(`Tidak ada investor yang cocok dengan "${escapeHtml(query)}".`);
+      return;
+    }
+
+    const metricName = sharesView ? "total holding shares" : "persentase kepemilikan";
+    const modeTitle = sharesView ? "Investor by Shares" : "Cari Investor";
+    let html = `<div class="section-title">${normNames.length} investor cocok · ${modeTitle}</div>
+      <p class="investor-search-note">Klik salah satu dari 11 header angka untuk mengurutkan ${metricName}: enam periode bulanan dan lima perubahan antarbulan. Klik lagi header yang sama untuk membalik urutan. Nilai kosong selalu berada di bawah.${sharesView ? " Jumlah saham memakai pemisah ribuan format Indonesia." : " Perubahan persentase ditampilkan dalam percentage point (pp)."}</p>`;
+
+    normNames.slice(0, 15).forEach((norm) => {
+      const { holdings, tickerCount } = buildInvestorHoldings(norm);
       const sortState = getInvestorSortState(norm, view);
       const sortedHoldings = sortRowsByNumber(holdings, sortState.key, sortState.dir);
-      const rows = sortedHoldings.map(holding=>{
-        const latestStatus = isSharesView ? holding.shareStatusJunJul : holding.statusJunJul;
-        const rowClass = latestStatus==='baru'
-          ? 'row-new'
-          : (latestStatus==='keluar' ? 'row-exit' : '');
-        const mayValue = isSharesView ? fmtShares(holding.mayShares) : fmtPct(holding.mayPct);
-        const junValue = isSharesView ? fmtShares(holding.junShares) : fmtPct(holding.junPct);
-        const julValue = isSharesView ? fmtShares(holding.julShares) : fmtPct(holding.julPct);
-        const mayJunChange = isSharesView
-          ? shareTransitionCell(holding.shareDeltaMayJun, holding.shareStatusMayJun)
-          : transitionCell(holding.deltaMayJun, holding.statusMayJun);
-        const junJulChange = isSharesView
-          ? shareTransitionCell(holding.shareDeltaJunJul, holding.shareStatusJunJul)
-          : transitionCell(holding.deltaJunJul, holding.statusJunJul);
-        const mayJunDelta = isSharesView ? holding.shareDeltaMayJun : holding.deltaMayJun;
-        const junJulDelta = isSharesView ? holding.shareDeltaJunJul : holding.deltaJunJul;
+      const latestStatusKey = sharesView
+        ? `shareStatus${LATEST_TRANSITION.suffix}`
+        : `status${LATEST_TRANSITION.suffix}`;
+
+      const rows = sortedHoldings.map((holding) => {
+        const latestStatus = holding[latestStatusKey];
+        const rowClass = latestStatus === "baru" ? "row-new" : latestStatus === "keluar" ? "row-exit" : "";
+        const periodCells = PERIODS.map((period) => {
+          const value = holding[`${period.key}${sharesView ? "Shares" : "Pct"}`];
+          return `<td class="r-pct investor-period-cell${sharesView ? " share-cell" : ""}">${sharesView ? fmtShares(value) : fmtPct(value)}</td>`;
+        }).join("");
+        const transitionCells = TRANSITIONS.map((transition) => {
+          const delta = holding[`${sharesView ? "shareDelta" : "delta"}${transition.suffix}`];
+          const status = holding[`${sharesView ? "shareStatus" : "status"}${transition.suffix}`];
+          return `<td class="r-delta ${deltaClass(delta)}${sharesView ? " share-delta-cell" : ""}">${transitionCell(delta, status, sharesView)}</td>`;
+        }).join("");
         return `<tr class="investor-stock-row ${rowClass}" data-ticker="${holding.ticker}" tabindex="0" role="button" aria-label="Buka detail saham ${holding.ticker}">
-          <td class="investor-stock-cell">
-            <div class="mover-ticker">${holding.ticker}</div>
-            <div class="mover-name mover-name-full">${escapeHtml(holding.issuer)}</div>
-          </td>
-          <td class="r-pct investor-period-cell${isSharesView?' share-cell':''}">${mayValue}</td>
-          <td class="r-pct investor-period-cell${isSharesView?' share-cell':''}">${junValue}</td>
-          <td class="r-pct investor-period-cell${isSharesView?' share-cell':''}">${julValue}</td>
-          <td class="r-delta ${deltaClass(mayJunDelta)}${isSharesView?' share-delta-cell':''}">${mayJunChange}</td>
-          <td class="r-delta ${deltaClass(junJulDelta)}${isSharesView?' share-delta-cell':''}">${junJulChange}</td>
+          <td class="investor-stock-cell"><div class="mover-ticker">${holding.ticker}</div><div class="mover-name mover-name-full">${escapeHtml(holding.issuer)}</div></td>
+          ${periodCells}${transitionCells}
         </tr>`;
-      }).join('');
+      }).join("");
+
+      const periodHeaders = PERIODS.map((period) => sortHeader({
+        owner: "investor",
+        ownerValue: norm,
+        key: `${period.key}${sharesView ? "Shares" : "Pct"}`,
+        label: period.label,
+        state: sortState,
+        view,
+      })).join("");
+      const transitionHeaders = TRANSITIONS.map((transition) => sortHeader({
+        owner: "investor",
+        ownerValue: norm,
+        key: `${sharesView ? "shareDelta" : "delta"}${transition.suffix}`,
+        label: transition.label,
+        state: sortState,
+        view,
+      })).join("");
+
       html += `<div class="result-card">
-        <div class="result-head"><div><div class="rh-ticker investor-name">${escapeHtml(namesMap[norm])}</div>
-        <div class="rh-issuer">terdaftar sebagai pemegang &gt;1% di ${tickers.size} saham pada setidaknya satu periode</div></div>
-        ${isSharesView?'<div class="rh-badges"><span class="badge badge-shares">TOTAL HOLDING SHARES</span></div>':''}</div>
+        <div class="result-head">
+          <div><div class="rh-ticker investor-name">${escapeHtml(namesMap[norm])}</div><div class="rh-issuer">terdaftar sebagai pemegang &gt;1% di ${tickerCount} saham pada setidaknya satu periode</div></div>
+          ${sharesView ? '<div class="rh-badges"><span class="badge badge-shares">TOTAL HOLDING SHARES</span></div>' : ""}
+        </div>
         <div class="table-scroll investor-table-scroll" role="region" aria-label="Riwayat ${metricName} ${escapeHtml(namesMap[norm])}" tabindex="0">
-          <table class="hold-table investor-hold-table${isSharesView?' shares-view':''}">
-            <thead><tr>
-              <th scope="col">Saham</th>
-              ${investorSortHeader(norm, isSharesView?'mayShares':'mayPct', 'Mei 2026', view)}
-              ${investorSortHeader(norm, isSharesView?'junShares':'junPct', 'Juni 2026', view)}
-              ${investorSortHeader(norm, isSharesView?'julShares':'julPct', 'Juli 2026', view)}
-              ${investorSortHeader(norm, isSharesView?'shareDeltaMayJun':'deltaMayJun', 'Mei 2026 → Juni 2026', view)}
-              ${investorSortHeader(norm, isSharesView?'shareDeltaJunJul':'deltaJunJul', 'Juni 2026 → Juli 2026', view)}
-            </tr></thead>
+          <table class="hold-table investor-hold-table${sharesView ? " shares-view" : ""}">
+            <thead><tr><th scope="col">Saham</th>${periodHeaders}${transitionHeaders}</tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
       </div>`;
     });
+
     mainArea.innerHTML = html;
-    mainArea.querySelectorAll('.investor-sort-btn[data-investor-key][data-view][data-key]').forEach(button=>{
-      button.addEventListener('click', event=>{
+    mainArea.querySelectorAll(".investor-sort-btn[data-investor-key][data-view][data-key]").forEach((button) => {
+      button.addEventListener("click", (event) => {
         event.stopPropagation();
         const norm = decodeURIComponent(button.dataset.investorKey);
         const currentView = button.dataset.view;
@@ -662,19 +675,21 @@
         const current = getInvestorSortState(norm, currentView);
         investorSortState[`${currentView}:${norm}`] = {
           key,
-          dir:current.key===key && current.dir==='desc' ? 'asc' : 'desc'
+          dir: current.key === key && current.dir === "desc" ? "asc" : "desc",
         };
         renderInvestorResults(searchInput.value.trim(), currentView);
       });
     });
-    mainArea.querySelectorAll('table.investor-hold-table tr[data-ticker]').forEach(row=>{
-      const openTicker = ()=>{
-        searchInput.value = row.getAttribute('data-ticker');
-        mode='saham'; setActiveTab(); runSearch();
+    mainArea.querySelectorAll("table.investor-hold-table tr[data-ticker]").forEach((row) => {
+      const openTicker = () => {
+        searchInput.value = row.dataset.ticker;
+        mode = "saham";
+        setActiveTab();
+        runSearch();
       };
-      row.addEventListener('click', openTicker);
-      row.addEventListener('keydown', event=>{
-        if(event.key==='Enter' || event.key===' '){
+      row.addEventListener("click", openTicker);
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           openTicker();
         }
@@ -682,199 +697,247 @@
     });
   }
 
-  function emptyState(msg){
-    return `<div class="empty-state">
-      <img class="empty-icon" src="search.svg" alt="" width="40" height="40">
-      <p>${msg}</p>
-    </div>`;
+  // =========================================================
+  // SCREENING
+  // =========================================================
+  function renderScreening(filterQuery) {
+    let rows = computeScreenData();
+    const query = (filterQuery || "").trim().toUpperCase();
+    if (query) {
+      rows = rows.filter(
+        (row) => row.ticker.includes(query) || (row.issuer || "").toUpperCase().includes(query),
+      );
+    }
+    rows = rows.slice().sort((a, b) => {
+      const difference = screenSortDir === "desc"
+        ? b[screenSortKey] - a[screenSortKey]
+        : a[screenSortKey] - b[screenSortKey];
+      return difference || a.ticker.localeCompare(b.ticker);
+    });
+    const total = rows.length;
+    const shown = screenShowAll ? rows : rows.slice(0, 50);
+
+    const groupHeaders = SCREEN_GROUPS.map(
+      (group) => `<th class="screen-group" colspan="${group.cols.length}" scope="colgroup">${escapeHtml(group.label)}</th>`,
+    ).join("");
+    const metricHeaders = SCREEN_COLS.map((column) => {
+      const sorted = column.key === screenSortKey;
+      const arrow = sorted ? (screenSortDir === "desc" ? "▼" : "▲") : "↕";
+      const ariaSort = sorted ? (screenSortDir === "desc" ? "descending" : "ascending") : "none";
+      return `<th class="${sorted ? "sorted" : ""}" aria-sort="${ariaSort}">
+        <button type="button" class="screen-sort-btn" data-key="${column.key}" aria-label="Urutkan ${escapeHtml(column.sortLabel)}">
+          <span>${escapeHtml(column.label)}</span><span class="arrow" aria-hidden="true">${arrow}</span>
+        </button>
+      </th>`;
+    }).join("");
+    const body = shown.map((row) => {
+      const cells = SCREEN_COLS.map((column) => {
+        const value = row[column.key];
+        return `<td class="${value > 0 ? column.cls : "cell-zero"}">${value}</td>`;
+      }).join("");
+      return `<tr data-ticker="${row.ticker}"><td class="td-label"><div class="st-ticker">${row.ticker}</div><div class="st-issuer">${escapeHtml(row.issuer || "")}</div></td>${cells}</tr>`;
+    }).join("");
+    const selectedColumn = SCREEN_COLS.find((column) => column.key === screenSortKey);
+
+    mainArea.innerHTML = `<div class="section-title">Screening Saham · Februari–Juli 2026</div>
+      <div class="screen-toolbar"><div class="screen-count">Menampilkan <b>${shown.length}</b> dari <b>${total}</b> saham &middot; diurutkan berdasarkan <b>${escapeHtml(selectedColumn.sortLabel)}</b> (${screenSortDir === "desc" ? "terbesar → terkecil" : "terkecil → terbesar"})</div></div>
+      <div class="screen-card">
+        <div class="screen-scroll" role="region" aria-label="Tabel screening saham" tabindex="0">
+          <table class="screen-table">
+            <thead><tr class="screen-group-row"><th class="th-label" rowspan="2" scope="col">Saham</th>${groupHeaders}</tr><tr class="screen-metric-row">${metricHeaders}</tr></thead>
+            <tbody>${body || `<tr><td colspan="${SCREEN_COLS.length + 1}" class="screen-empty">Tidak ada hasil.</td></tr>`}</tbody>
+          </table>
+        </div>
+        ${!screenShowAll && total > 50 ? `<button class="show-more-btn" id="showMoreBtn">TAMPILKAN SEMUA (${total})</button>` : ""}
+      </div>
+      <p class="foot-note">Tabel menyediakan enam kolom total pemegang &gt;1% dan lima grup perubahan antarbulan. Setiap grup perubahan mempunyai Investor Baru, Nambah, Kurangi, dan Keluar. Klik header metrik untuk mengubah arah sort; klik baris untuk membuka detail saham.</p>`;
+
+    mainArea.querySelectorAll(".screen-sort-btn[data-key]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const key = button.dataset.key;
+        if (screenSortKey === key) screenSortDir = screenSortDir === "desc" ? "asc" : "desc";
+        else {
+          screenSortKey = key;
+          screenSortDir = "desc";
+        }
+        renderScreening(searchInput.value.trim());
+      });
+    });
+    mainArea.querySelectorAll("table.screen-table tr[data-ticker]").forEach((row) => {
+      row.addEventListener("click", () => {
+        searchInput.value = row.dataset.ticker;
+        mode = "saham";
+        setActiveTab();
+        runSearch();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    });
+    const showMoreButton = document.getElementById("showMoreBtn");
+    if (showMoreButton) {
+      showMoreButton.addEventListener("click", () => {
+        screenShowAll = true;
+        renderScreening(searchInput.value.trim());
+      });
+    }
   }
 
-  function setActiveTab(){
-    tabBtns.forEach(b => b.classList.toggle('active', b.dataset.mode===mode));
-    if(mode==='saham') searchInput.placeholder = 'Ketik kode saham, mis. BBCA, AWAN, PKPK...';
-    else if(mode==='investor') searchInput.placeholder = 'Ketik nama investor, mis. TASPEN, BAKRIE...';
-    else if(mode==='investor-shares') searchInput.placeholder = 'Ketik nama investor untuk melihat total holding shares...';
-    else searchInput.placeholder = 'Filter kode saham atau nama emiten (opsional)...';
+  // =========================================================
+  // OVERVIEW, HINT, DAN EVENT
+  // =========================================================
+  function renderOverview() {
+    const stats = computeMarketStats();
+    const moverRows = (items, valueRenderer) => items.slice(0, 8).map((item) => `
+      <div class="mover-row" data-ticker="${item.ticker}">
+        <div class="mover-left"><div class="mover-ticker">${item.ticker}</div><div class="mover-name">${escapeHtml(item.name)}</div></div>
+        <div class="mover-pct">${valueRenderer(item)}</div>
+      </div>`).join("");
+
+    mainArea.innerHTML = `<div class="section-title">Ringkasan Periode Terbaru (${LATEST_TRANSITION.label})</div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-num">${allTickers.size}</div><div class="stat-label">Total saham tercakup, Februari–Juli</div></div>
+        <div class="stat-card"><div class="stat-num gold">${stats.newCount}</div><div class="stat-label">Investor baru periode terbaru</div></div>
+        <div class="stat-card"><div class="stat-num neg">${stats.exitCount}</div><div class="stat-label">Investor keluar periode terbaru</div></div>
+        <div class="stat-card"><div class="stat-num">${stats.changedCount}</div><div class="stat-label">Perubahan signifikan (&ge;0.5pp)</div></div>
+      </div>
+      <div class="section-title">Pergerakan Terbesar</div>
+      <div class="mover-grid">
+        <div class="mover-card new"><h3>⬤ Investor Baru Terbesar</h3>${moverRows(stats.bigNew, (item) => `<span class="text-positive">${fmtPct(item.pct)}</span>`)}</div>
+        <div class="mover-card exit"><h3>⬤ Investor Keluar Terbesar</h3>${moverRows(stats.bigExit, (item) => `<span class="text-negative">${fmtPct(item.pct)}</span>`)}</div>
+      </div>
+      ${stats.newTickers.length ? `<div class="section-title">Saham Baru Muncul di ${LATEST_PERIOD.short}</div><div class="mover-card new">${stats.newTickers.map((ticker) => `<div class="mover-row" data-ticker="${ticker}"><div class="mover-left"><div class="mover-ticker">${ticker}</div><div class="mover-name">${escapeHtml(issuerByTicker[ticker] || "")}</div></div><div class="mover-pct text-gold">lihat →</div></div>`).join("")}</div>` : ""}
+      <p class="foot-note">Cari Saham, Cari Investor, Investor by Shares, dan Screening memakai data lengkap Februari, Maret, April, Mei, Juni, dan Juli 2026. Ringkasan serta ticker berjalan tetap berfokus pada periode terbaru, ${LATEST_TRANSITION.label}. Nama investor dinormalisasi agar variasi penulisan tidak keliru dihitung sebagai investor baru.</p>`;
+
+    mainArea.querySelectorAll(".mover-row[data-ticker]").forEach((row) => {
+      row.addEventListener("click", () => {
+        searchInput.value = row.dataset.ticker;
+        mode = "saham";
+        setActiveTab();
+        runSearch();
+      });
+    });
+  }
+
+  function renderTape() {
+    const stats = computeMarketStats();
+    const items = [];
+    stats.bigChange.slice(0, 10).forEach((item) => {
+      items.push(`<span class="tape-item" data-ticker="${item.ticker}"><b>${item.ticker}</b> ${escapeHtml(item.name)} <span class="${item.delta > 0 ? "tape-up" : "tape-down"}">${item.delta > 0 ? "▲" : "▼"} ${Math.abs(item.delta).toFixed(2)}pp</span></span>`);
+    });
+    stats.bigNew.slice(0, 8).forEach((item) => {
+      items.push(`<span class="tape-item" data-ticker="${item.ticker}"><b>${item.ticker}</b> <span class="tape-new">BARU</span> ${escapeHtml(item.name)} ${fmtPct(item.pct)}</span>`);
+    });
+    const html = items.join("") || '<span class="tape-item">Tidak ada pergerakan signifikan periode ini.</span>';
+    const track = document.getElementById("tapeTrack");
+    track.innerHTML = html + html;
+    track.querySelectorAll(".tape-item[data-ticker]").forEach((item) => {
+      item.addEventListener("click", () => {
+        searchInput.value = item.dataset.ticker;
+        mode = "saham";
+        setActiveTab();
+        runSearch();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    });
+  }
+
+  function emptyState(message) {
+    return `<div class="empty-state"><img class="empty-icon" src="search.svg" alt="" width="40" height="40"><p>${message}</p></div>`;
+  }
+
+  function setActiveTab() {
+    tabBtns.forEach((button) => button.classList.toggle("active", button.dataset.mode === mode));
+    if (mode === "saham") searchInput.placeholder = "Ketik kode saham, mis. BBCA, AWAN, PKPK...";
+    else if (mode === "investor") searchInput.placeholder = "Ketik nama investor, mis. TASPEN, BAKRIE...";
+    else if (mode === "investor-shares") searchInput.placeholder = "Ketik nama investor untuk melihat total holding shares...";
+    else searchInput.placeholder = "Filter kode saham atau nama emiten (opsional)...";
     renderHints();
   }
 
-  function renderHints(){
-    if(mode==='screening'){
-      const opts = [
-        {label:'Investor baru Juni', key:'newJun'},
-        {label:'Investor baru Juli', key:'newJul'},
-        {label:'Nambah Mei→Juni', key:'upJun'},
-        {label:'Nambah Juni→Juli', key:'upJul'},
-        {label:'Kurangi Mei→Juni', key:'downJun'},
-        {label:'Kurangi Juni→Juli', key:'downJul'},
-        {label:'Keluar Juni', key:'exitJun'},
-        {label:'Keluar Juli', key:'exitJul'},
-        {label:'Total pemegang Mei', key:'totalMay'},
-        {label:'Total pemegang Juni', key:'totalJun'},
-        {label:'Total pemegang Juli', key:'totalJul'},
-      ];
-      hintRow.innerHTML = opts.map(o=>`<button type="button" class="hint-chip" data-key="${o.key}">${o.label}</button>`).join('');
-      hintRow.querySelectorAll('.hint-chip').forEach(el=>{
-        el.addEventListener('click', ()=>{
-          screenSortKey = el.dataset.key; screenSortDir = 'desc'; screenShowAll = false;
+  function renderHints() {
+    if (mode === "screening") {
+      const options = [];
+      PERIODS.forEach((period) => {
+        options.push({ label: `Total ${period.short}`, key: totalField(period) });
+      });
+      TRANSITIONS.forEach((transition) => {
+        options.push(
+          { label: `Baru ${transition.current.short}`, key: metricField("new", transition) },
+          { label: `Nambah ${transition.shortLabel}`, key: metricField("up", transition) },
+          { label: `Kurangi ${transition.shortLabel}`, key: metricField("down", transition) },
+          { label: `Keluar ${transition.current.short}`, key: metricField("exit", transition) },
+        );
+      });
+      hintRow.innerHTML = options.map(
+        (option) => `<button type="button" class="hint-chip" data-key="${option.key}">${escapeHtml(option.label)}</button>`,
+      ).join("");
+      hintRow.querySelectorAll(".hint-chip[data-key]").forEach((button) => {
+        button.addEventListener("click", () => {
+          screenSortKey = button.dataset.key;
+          screenSortDir = "desc";
+          screenShowAll = false;
           runSearch();
         });
       });
       return;
     }
-    const chips = mode==='saham'
-      ? ['AWAN','PKPK','DATA','BNBR','MAPI','BACH']
-      : ['TASPEN','BAKRIE','VICTORIA','SAMUEL TUMBUH BERSAMA'];
-    hintRow.innerHTML = chips.map(c=>`<span class="hint-chip" data-val="${c}">${c}</span>`).join('');
-    hintRow.querySelectorAll('.hint-chip').forEach(el=>{
-      el.addEventListener('click', ()=>{ searchInput.value = el.dataset.val; runSearch(); });
+    const chips = mode === "saham"
+      ? ["AWAN", "PKPK", "DATA", "BNBR", "MAPI", "BACH"]
+      : ["TASPEN", "BAKRIE", "VICTORIA", "SAMUEL TUMBUH BERSAMA"];
+    hintRow.innerHTML = chips.map(
+      (chip) => `<button type="button" class="hint-chip" data-val="${chip}">${chip}</button>`,
+    ).join("");
+    hintRow.querySelectorAll(".hint-chip[data-val]").forEach((button) => {
+      button.addEventListener("click", () => {
+        searchInput.value = button.dataset.val;
+        runSearch();
+      });
     });
   }
 
-  function runSearch(){
-    const q = searchInput.value.trim();
-    if(mode==='screening'){ renderScreening(q); return; }
-    if(!q){ renderOverview(); return; }
-    if(mode==='saham') renderTickerResults(q);
-    else if(mode==='investor') renderInvestorResults(q, 'percentage');
-    else renderInvestorResults(q, 'shares');
-  }
-
-  function renderScreening(filterQuery){
-    let rows = computeScreenData();
-    const q = (filterQuery||'').trim().toUpperCase();
-    if(q){
-      rows = rows.filter(r => r.ticker.includes(q) || (r.issuer||'').toUpperCase().includes(q));
+  function runSearch() {
+    const query = searchInput.value.trim();
+    if (mode === "screening") {
+      renderScreening(query);
+      return;
     }
-    rows = rows.slice().sort((a,b)=>{
-      const diff = screenSortDir==='desc'
-        ? b[screenSortKey] - a[screenSortKey]
-        : a[screenSortKey] - b[screenSortKey];
-      return diff || a.ticker.localeCompare(b.ticker);
-    });
-    const total = rows.length;
-    const shown = screenShowAll ? rows : rows.slice(0, 50);
-
-    const groupHeadHtml = SCREEN_GROUPS.map(group=>
-      `<th class="screen-group" colspan="${group.cols.length}" scope="colgroup">${group.label}</th>`
-    ).join('');
-
-    const metricHeadHtml = SCREEN_COLS.map(c => {
-      const sorted = c.key===screenSortKey;
-      const arrow = sorted ? (screenSortDir==='desc' ? '▼' : '▲') : '↕';
-      const ariaSort = sorted ? (screenSortDir==='desc' ? 'descending' : 'ascending') : 'none';
-      return `<th class="${sorted?'sorted':''}" aria-sort="${ariaSort}">
-        <button type="button" class="screen-sort-btn" data-key="${c.key}" aria-label="Urutkan ${c.sortLabel}">
-          <span>${c.label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
-        </button>
-      </th>`;
-    }).join('');
-
-    const bodyHtml = shown.map(r => {
-      const cells = SCREEN_COLS.map(c=>{
-        const val = r[c.key];
-        const cellCls = val>0 ? c.cls : 'cell-zero';
-        return `<td class="${cellCls}${c.hideMobile?' td-hide-mobile':''}">${val}</td>`;
-      }).join('');
-      return `<tr data-ticker="${r.ticker}">
-        <td class="td-label">
-          <div class="st-ticker">${r.ticker}</div>
-          <div class="st-issuer">${escapeHtml(r.issuer||'')}</div>
-        </td>
-        ${cells}
-      </tr>`;
-    }).join('');
-
-    mainArea.innerHTML = `
-      <div class="section-title">Screening Saham</div>
-      <div class="screen-toolbar">
-        <div class="screen-count">Menampilkan <b>${shown.length}</b> dari <b>${total}</b> saham &middot; diurutkan berdasarkan <b>${SCREEN_COLS.find(c=>c.key===screenSortKey).sortLabel}</b> (${screenSortDir==='desc'?'terbesar → terkecil':'terkecil → terbesar'})</div>
-      </div>
-      <div class="screen-card">
-        <div class="screen-scroll" role="region" aria-label="Tabel screening saham" tabindex="0">
-          <table class="screen-table">
-            <thead>
-              <tr class="screen-group-row"><th class="th-label" rowspan="2" scope="col">Saham</th>${groupHeadHtml}</tr>
-              <tr class="screen-metric-row">${metricHeadHtml}</tr>
-            </thead>
-            <tbody>${bodyHtml || `<tr><td colspan="${SCREEN_COLS.length+1}" class="screen-empty">Tidak ada hasil.</td></tr>`}</tbody>
-          </table>
-        </div>
-        ${!screenShowAll && total>50 ? `<button class="show-more-btn" id="showMoreBtn">TAMPILKAN SEMUA (${total})</button>` : ''}
-      </div>
-      <p class="foot-note">Klik tombol judul kolom untuk mengurutkan terbesar → terkecil atau terkecil → terbesar. Grup Mei → Juni menghasilkan metrik investor baru/menambah/mengurangi/keluar di Juni; grup Juni → Juli menghasilkan metrik yang sama di Juli. Kolom total menghitung pemegang saham dengan kepemilikan &gt;1% pada masing-masing bulan. Klik baris saham untuk membuka detailnya.</p>
-    `;
-
-    mainArea.querySelectorAll('.screen-sort-btn[data-key]').forEach(button=>{
-      button.addEventListener('click', event=>{
-        event.stopPropagation();
-        const key = button.dataset.key;
-        if(screenSortKey===key) screenSortDir = screenSortDir==='desc' ? 'asc' : 'desc';
-        else { screenSortKey = key; screenSortDir = 'desc'; }
-        renderScreening(searchInput.value.trim());
-      });
-    });
-    mainArea.querySelectorAll('table.screen-table tr[data-ticker]').forEach(tr=>{
-      tr.addEventListener('click', ()=>{
-        searchInput.value = tr.getAttribute('data-ticker');
-        mode='saham'; setActiveTab(); runSearch();
-        window.scrollTo({top:0, behavior:'smooth'});
-      });
-    });
-    const showMoreBtn = document.getElementById('showMoreBtn');
-    if(showMoreBtn) showMoreBtn.addEventListener('click', ()=>{ screenShowAll = true; renderScreening(searchInput.value.trim()); });
+    if (!query) {
+      renderOverview();
+      return;
+    }
+    if (mode === "saham") renderTickerResults(query);
+    else if (mode === "investor") renderInvestorResults(query, "percentage");
+    else renderInvestorResults(query, "shares");
   }
 
-  // ---------- Ticker tape ----------
-  function renderTape(){
-    const s = computeMarketStats();
-    const items = [];
-    s.bigChange.slice(0,10).forEach(m=>{
-      items.push(`<span class="tape-item" data-ticker="${m.t}"><b>${m.t}</b> ${escapeHtml(m.name)} <span class="${m.delta>0?'tape-up':'tape-down'}">${m.delta>0?'▲':'▼'} ${Math.abs(m.delta).toFixed(2)}pp</span></span>`);
-    });
-    s.bigNew.slice(0,8).forEach(m=>{
-      items.push(`<span class="tape-item" data-ticker="${m.t}"><b>${m.t}</b> <span class="tape-new">BARU</span> ${escapeHtml(m.name)} ${fmtPct(m.pct)}</span>`);
-    });
-    const html = items.join('') || '<span class="tape-item">Tidak ada pergerakan signifikan periode ini.</span>';
-    const track = document.getElementById('tapeTrack');
-    track.innerHTML = html + html; // duplicate for seamless loop
-    track.querySelectorAll('.tape-item[data-ticker]').forEach(el=>{
-      el.addEventListener('click', ()=>{
-        searchInput.value = el.getAttribute('data-ticker');
-        mode='saham'; setActiveTab(); runSearch();
-        window.scrollTo({top:0, behavior:'smooth'});
-      });
-    });
+  function debounce(callback, milliseconds) {
+    let timer;
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => callback(...args), milliseconds);
+    };
   }
 
-  // ---------- Wire up events ----------
-  tabBtns.forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      mode = btn.dataset.mode;
+  tabBtns.forEach((button) => {
+    button.addEventListener("click", () => {
+      mode = button.dataset.mode;
       setActiveTab();
       runSearch();
     });
   });
-  searchInput.addEventListener('input', debounce(runSearch, 150));
-  clearBtn.addEventListener('click', ()=>{ searchInput.value=''; runSearch(); searchInput.focus(); });
+  searchInput.addEventListener("input", debounce(runSearch, 150));
+  clearBtn.addEventListener("click", () => {
+    searchInput.value = "";
+    runSearch();
+    searchInput.focus();
+  });
 
-  function debounce(fn, ms){
-    let t;
-    return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); };
-  }
-
-  // ---------- Init ----------
   setActiveTab();
   renderTape();
   renderOverview();
-
-})().catch(error => {
+})().catch((error) => {
   console.error(error);
-  const mainArea = document.getElementById('mainArea');
-  if(!mainArea) return;
-  mainArea.textContent = '';
-  const message = document.createElement('div');
-  message.className = 'empty-state';
-  message.textContent = 'Data JSON tidak dapat dimuat. Jalankan aplikasi melalui web server atau layanan hosting.';
-  mainArea.appendChild(message);
+  const mainArea = document.getElementById("mainArea");
+  if (!mainArea) return;
+  mainArea.innerHTML = `<div class="empty-state"><p>Data JSON tidak dapat dimuat. Jalankan aplikasi melalui web server atau hosting.<br><small>${String(error.message || error)}</small></p></div>`;
 });
