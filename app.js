@@ -274,6 +274,9 @@
   // Tiap kartu saham menyimpan pilihan sort-nya sendiri.
   const tickerSortState = {};
 
+  // Tiap kartu investor juga menyimpan pilihan sort bulan secara mandiri.
+  const investorSortState = {};
+
   // ---------- Rendering helpers ----------
   const mainArea = document.getElementById('mainArea');
   const searchInput = document.getElementById('searchInput');
@@ -339,8 +342,25 @@
     const sorted = state.key===key;
     const arrow = sorted ? (state.dir==='desc' ? '▼' : '▲') : '↕';
     const ariaSort = sorted ? (state.dir==='desc' ? 'descending' : 'ascending') : 'none';
-    return `<th class="text-right${sorted?' sorted':''}" aria-sort="${ariaSort}">
+    return `<th class="text-right${sorted?' sorted':''}" scope="col" aria-sort="${ariaSort}">
       <button type="button" class="table-sort-btn ticker-sort-btn" data-ticker="${ticker}" data-key="${key}" aria-label="Urutkan ${label}">
+        <span>${label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
+      </button>
+    </th>`;
+  }
+
+  function getInvestorSortState(norm){
+    return investorSortState[norm] || {key:'julPct', dir:'desc'};
+  }
+
+  function investorSortHeader(norm, key, label){
+    const state = getInvestorSortState(norm);
+    const sorted = state.key===key;
+    const arrow = sorted ? (state.dir==='desc' ? '▼' : '▲') : '↕';
+    const ariaSort = sorted ? (state.dir==='desc' ? 'descending' : 'ascending') : 'none';
+    const investorKey = encodeURIComponent(norm);
+    return `<th class="text-right${sorted?' sorted':''}" scope="col" aria-sort="${ariaSort}">
+      <button type="button" class="table-sort-btn investor-sort-btn" data-investor-key="${investorKey}" data-key="${key}" aria-label="Urutkan kepemilikan ${label}">
         <span>${label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
       </button>
     </th>`;
@@ -509,7 +529,8 @@
       mainArea.innerHTML = emptyState('Tidak ada investor yang cocok dengan "'+escapeHtml(query)+'".');
       return;
     }
-    let html = `<div class="section-title">${normNames.length} investor cocok</div>`;
+    let html = `<div class="section-title">${normNames.length} investor cocok</div>
+      <p class="investor-search-note">Klik header Mei, Juni, atau Juli untuk mengurutkan persentase kepemilikan pada setiap kartu investor. Urutan awal menggunakan Juli 2026 dari terbesar ke terkecil; nilai kosong selalu ditempatkan paling bawah.</p>`;
     normNames.slice(0,15).forEach(norm=>{
       const meiRows = MEI.filter(r=>r.norm===norm);
       const junRows = JUN.filter(r=>r.norm===norm);
@@ -519,35 +540,84 @@
         ...junRows.map(r=>r.t),
         ...julRows.map(r=>r.t)
       ]);
-      const rows = [...tickers].sort().map(t=>{
+      const holdings = [...tickers].map(t=>{
         const mr = meiRows.find(r=>r.t===t);
         const jr = junRows.find(r=>r.t===t);
         const jl = julRows.find(r=>r.t===t);
-        const statusMayJun = periodStatus(mr, jr, false);
-        const statusJunJul = periodStatus(jr, jl, false);
-        const latestStatus = statusJunJul || statusMayJun;
-        return `<div class="investor-ticker-row" data-ticker="${t}">
-          <div>
-            <div class="mover-ticker">${t}</div>
-            <div class="mover-name" style="max-width:100%">${escapeHtml(issuerByTicker[t]||'')}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:14px;">
-            <span class="r-pct" style="font-family:var(--font-mono)">${fmtPct(mr?mr.p:null)} → ${fmtPct(jr?jr.p:null)} → ${fmtPct(jl?jl.p:null)}</span>
-            ${statusChip(latestStatus)}
-          </div>
-        </div>`;
+        return {
+          name:t,
+          ticker:t,
+          issuer:issuerByTicker[t]||'',
+          mayPct:mr ? mr.p : null,
+          junPct:jr ? jr.p : null,
+          julPct:jl ? jl.p : null,
+          deltaMayJun:periodDelta(mr, jr),
+          deltaJunJul:periodDelta(jr, jl),
+          statusMayJun:periodStatus(mr, jr, false),
+          statusJunJul:periodStatus(jr, jl, false)
+        };
+      });
+      const sortState = getInvestorSortState(norm);
+      const sortedHoldings = sortRowsByNumber(holdings, sortState.key, sortState.dir);
+      const rows = sortedHoldings.map(holding=>{
+        const rowClass = holding.statusJunJul==='baru'
+          ? 'row-new'
+          : (holding.statusJunJul==='keluar' ? 'row-exit' : '');
+        return `<tr class="investor-stock-row ${rowClass}" data-ticker="${holding.ticker}" tabindex="0" role="button" aria-label="Buka detail saham ${holding.ticker}">
+          <td class="investor-stock-cell">
+            <div class="mover-ticker">${holding.ticker}</div>
+            <div class="mover-name mover-name-full">${escapeHtml(holding.issuer)}</div>
+          </td>
+          <td class="r-pct investor-period-cell">${fmtPct(holding.mayPct)}</td>
+          <td class="r-pct investor-period-cell">${fmtPct(holding.junPct)}</td>
+          <td class="r-pct investor-period-cell">${fmtPct(holding.julPct)}</td>
+          <td class="r-delta ${deltaClass(holding.deltaMayJun)}">${transitionCell(holding.deltaMayJun, holding.statusMayJun)}</td>
+          <td class="r-delta ${deltaClass(holding.deltaJunJul)}">${transitionCell(holding.deltaJunJul, holding.statusJunJul)}</td>
+        </tr>`;
       }).join('');
       html += `<div class="result-card">
-        <div class="result-head"><div><div class="rh-ticker" style="font-size:16px;">${escapeHtml(namesMap[norm])}</div>
-        <div class="rh-issuer">terdaftar sebagai pemegang &gt;1% di ${tickers.size} saham</div></div></div>
-        ${rows}
+        <div class="result-head"><div><div class="rh-ticker investor-name">${escapeHtml(namesMap[norm])}</div>
+        <div class="rh-issuer">terdaftar sebagai pemegang &gt;1% di ${tickers.size} saham pada setidaknya satu periode</div></div></div>
+        <div class="table-scroll investor-table-scroll" role="region" aria-label="Riwayat kepemilikan ${escapeHtml(namesMap[norm])}" tabindex="0">
+          <table class="hold-table investor-hold-table">
+            <thead><tr>
+              <th scope="col">Saham</th>
+              ${investorSortHeader(norm, 'mayPct', 'Mei 2026')}
+              ${investorSortHeader(norm, 'junPct', 'Juni 2026')}
+              ${investorSortHeader(norm, 'julPct', 'Juli 2026')}
+              <th class="text-right" scope="col">Mei→Juni</th>
+              <th class="text-right" scope="col">Juni→Juli</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
       </div>`;
     });
     mainArea.innerHTML = html;
-    mainArea.querySelectorAll('.investor-ticker-row[data-ticker]').forEach(el=>{
-      el.addEventListener('click', ()=>{
-        searchInput.value = el.getAttribute('data-ticker');
+    mainArea.querySelectorAll('.investor-sort-btn[data-investor-key][data-key]').forEach(button=>{
+      button.addEventListener('click', event=>{
+        event.stopPropagation();
+        const norm = decodeURIComponent(button.dataset.investorKey);
+        const key = button.dataset.key;
+        const current = getInvestorSortState(norm);
+        investorSortState[norm] = {
+          key,
+          dir:current.key===key && current.dir==='desc' ? 'asc' : 'desc'
+        };
+        renderInvestorResults(searchInput.value.trim());
+      });
+    });
+    mainArea.querySelectorAll('table.investor-hold-table tr[data-ticker]').forEach(row=>{
+      const openTicker = ()=>{
+        searchInput.value = row.getAttribute('data-ticker');
         mode='saham'; setActiveTab(); runSearch();
+      };
+      row.addEventListener('click', openTicker);
+      row.addEventListener('keydown', event=>{
+        if(event.key==='Enter' || event.key===' '){
+          event.preventDefault();
+          openTicker();
+        }
       });
     });
   }
