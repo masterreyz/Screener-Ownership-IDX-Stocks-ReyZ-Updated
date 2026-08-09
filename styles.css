@@ -136,6 +136,7 @@
   }
   .tabs{
     display:flex;
+    flex-wrap:wrap;
     gap:2px;
     background:var(--surface);
     border:1px solid var(--border);
@@ -371,6 +372,7 @@
   }
   .badge-new{ background:var(--positive-bg); color:var(--positive); }
   .badge-exit{ background:var(--negative-bg); color:var(--negative); }
+  .badge-shares{ background:rgba(205,164,52,.12); color:var(--gold); }
 
   table.hold-table{
     width:100%;
@@ -882,7 +884,7 @@
 
     .tabs{
       display:grid;
-      grid-template-columns:repeat(3, minmax(0, 1fr));
+      grid-template-columns:repeat(2, minmax(0, 1fr));
       width:100%;
     }
 
@@ -1040,6 +1042,102 @@
     .section-title{
       font-size:12px;
     }
+  }
+
+  /* ---------- Tabel hasil pencarian investor ---------- */
+  .investor-search-note{
+    margin:-2px 0 16px;
+    color:var(--text-muted);
+    font-size:clamp(12px, 0.2vw + 11px, 14px);
+    line-height:1.6;
+  }
+
+  .result-head .rh-ticker.investor-name{
+    font-size:clamp(16px, 0.45vw + 14px, 20px);
+    overflow-wrap:anywhere;
+  }
+
+  .investor-table-scroll{
+    max-width:100%;
+  }
+
+  table.investor-hold-table{
+    min-width:1040px;
+  }
+
+  table.investor-hold-table.shares-view{
+    min-width:1320px;
+  }
+
+  table.investor-hold-table th:first-child,
+  table.investor-hold-table td:first-child{
+    position:sticky;
+    left:0;
+    min-width:clamp(250px, 25vw, 430px);
+    background:var(--surface);
+    box-shadow:1px 0 0 var(--border);
+  }
+
+  table.investor-hold-table th:first-child{
+    z-index:4;
+  }
+
+  table.investor-hold-table td:first-child{
+    z-index:2;
+  }
+
+  table.investor-hold-table .investor-period-cell{
+    min-width:132px;
+  }
+
+  table.investor-hold-table.shares-view .investor-period-cell{
+    min-width:205px;
+    white-space:nowrap;
+  }
+
+  table.investor-hold-table.shares-view .share-delta-cell{
+    min-width:245px;
+  }
+
+  table.investor-hold-table th:nth-child(5),
+  table.investor-hold-table th:nth-child(6),
+  table.investor-hold-table td:nth-child(5),
+  table.investor-hold-table td:nth-child(6){
+    min-width:170px;
+  }
+
+  table.investor-hold-table .investor-stock-cell .mover-name{
+    max-width:none;
+    white-space:normal;
+  }
+
+  table.investor-hold-table tr.investor-stock-row{
+    cursor:pointer;
+  }
+
+  table.investor-hold-table tr.investor-stock-row:hover td,
+  table.investor-hold-table tr.investor-stock-row:focus-visible td{
+    background:var(--surface-2);
+  }
+
+  table.investor-hold-table tr.investor-stock-row:focus-visible{
+    outline:2px solid var(--gold);
+    outline-offset:-2px;
+  }
+
+  table.investor-hold-table tr.row-new td:first-child{
+    background:#10241f;
+  }
+
+  table.investor-hold-table tr.row-exit td:first-child{
+    background:#24191d;
+  }
+
+  table.investor-hold-table tr.row-new:hover td:first-child,
+  table.investor-hold-table tr.row-new:focus-visible td:first-child,
+  table.investor-hold-table tr.row-exit:hover td:first-child,
+  table.investor-hold-table tr.row-exit:focus-visible td:first-child{
+    background:var(--surface-2);
   }
 
   @media (prefers-reduced-motion:reduce){
