@@ -11,8 +11,8 @@
     { key: "mar", label: "Maret 2026", short: "Maret", file: "data-mar2026.json" },
     { key: "apr", label: "April 2026", short: "April", file: "data-apr2026.json" },
     { key: "may", label: "Mei 2026", short: "Mei", file: "data-mei2026.json" },
-    { key: "jun", label: "Juni 2026", short: "Juni", file: "data-jun.json" },
-    { key: "jul", label: "Juli 2026", short: "Juli", file: "data-jul.json" },
+    { key: "jun", label: "Juni 2026", short: "Juni", file: "data-jun2026.json" },
+    { key: "jul", label: "Juli 2026", short: "Juli", file: "data-jul2026.json" },
   ];
 
   const TRANSITIONS = PERIODS.slice(1).map((current, index) => {
