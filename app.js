@@ -74,6 +74,20 @@
     return previous && current ? +(current.p - previous.p).toFixed(2) : null;
   }
 
+  function periodShareStatus(previous, current){
+    if(previous && current){
+      const delta = current.sh - previous.sh;
+      return delta===0 ? 'tetap' : (delta>0 ? 'naik' : 'turun');
+    }
+    if(!previous && current) return 'baru';
+    if(previous && !current) return 'keluar';
+    return null;
+  }
+
+  function periodShareDelta(previous, current){
+    return previous && current ? current.sh - previous.sh : null;
+  }
+
   function uniqueSamePercentage(rows, percentage, usedNorms){
     const candidates = rows.filter(r =>
       !usedNorms.has(r.norm) && r.p.toFixed(2) === percentage.toFixed(2)
@@ -285,7 +299,17 @@
   const tabBtns = document.querySelectorAll('.tab-btn');
   let mode = 'saham';
 
+  const integerFormatter = new Intl.NumberFormat('id-ID', {maximumFractionDigits:0});
+
   function fmtPct(p){ return p==null ? '—' : p.toFixed(2)+'%'; }
+  function fmtShares(shares){
+    return shares==null ? '—' : integerFormatter.format(shares)+' saham';
+  }
+  function fmtShareDelta(delta){
+    if(delta==null) return '';
+    const sign = delta>0 ? '+' : (delta<0 ? '−' : '');
+    return sign+integerFormatter.format(Math.abs(delta))+' saham';
+  }
   function fmtDelta(d){
     if(d==null) return '';
     const sign = d>0 ? '+' : '';
@@ -314,6 +338,12 @@
       return statusChip(status);
     }
     return fmtDelta(delta)+' '+statusChip(status);
+  }
+
+  function shareTransitionCell(delta, status){
+    if(!status) return statusChip(null);
+    if(status==='baru' || status==='keluar') return statusChip(status);
+    return fmtShareDelta(delta)+' '+statusChip(status);
   }
 
   function getTickerSortState(ticker){
@@ -349,18 +379,21 @@
     </th>`;
   }
 
-  function getInvestorSortState(norm){
-    return investorSortState[norm] || {key:'julPct', dir:'desc'};
+  function getInvestorSortState(norm, view='percentage'){
+    const stateKey = `${view}:${norm}`;
+    const defaultKey = view==='shares' ? 'julShares' : 'julPct';
+    return investorSortState[stateKey] || {key:defaultKey, dir:'desc'};
   }
 
-  function investorSortHeader(norm, key, label){
-    const state = getInvestorSortState(norm);
+  function investorSortHeader(norm, key, label, view='percentage'){
+    const state = getInvestorSortState(norm, view);
     const sorted = state.key===key;
     const arrow = sorted ? (state.dir==='desc' ? '▼' : '▲') : '↕';
     const ariaSort = sorted ? (state.dir==='desc' ? 'descending' : 'ascending') : 'none';
     const investorKey = encodeURIComponent(norm);
+    const metricLabel = view==='shares' ? 'total saham' : 'persentase kepemilikan';
     return `<th class="text-right${sorted?' sorted':''}" scope="col" aria-sort="${ariaSort}">
-      <button type="button" class="table-sort-btn investor-sort-btn" data-investor-key="${investorKey}" data-key="${key}" aria-label="Urutkan kepemilikan ${label}">
+      <button type="button" class="table-sort-btn investor-sort-btn" data-investor-key="${investorKey}" data-view="${view}" data-key="${key}" aria-label="Urutkan ${metricLabel} ${label}">
         <span>${label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
       </button>
     </th>`;
@@ -513,7 +546,8 @@
     wireTickerSortControls();
   }
 
-  function renderInvestorResults(query){
+  function renderInvestorResults(query, view='percentage'){
+    const isSharesView = view==='shares';
     const q = normalize(query);
     if(!q){
       mainArea.innerHTML = emptyState('Ketik nama investor untuk mulai pencarian, mis. "TASPEN" atau "BAKRIE".');
@@ -529,8 +563,10 @@
       mainArea.innerHTML = emptyState('Tidak ada investor yang cocok dengan "'+escapeHtml(query)+'".');
       return;
     }
-    let html = `<div class="section-title">${normNames.length} investor cocok</div>
-      <p class="investor-search-note">Klik header Mei, Juni, atau Juli untuk mengurutkan persentase kepemilikan pada setiap kartu investor. Urutan awal menggunakan Juli 2026 dari terbesar ke terkecil; nilai kosong selalu ditempatkan paling bawah.</p>`;
+    const metricName = isSharesView ? 'total holding shares' : 'persentase kepemilikan';
+    const modeTitle = isSharesView ? 'Investor by Shares' : 'Cari Investor';
+    let html = `<div class="section-title">${normNames.length} investor cocok · ${modeTitle}</div>
+      <p class="investor-search-note">Klik header Mei, Juni, atau Juli untuk mengurutkan ${metricName} pada setiap kartu investor. Urutan awal menggunakan Juli 2026 dari terbesar ke terkecil; nilai kosong selalu ditempatkan paling bawah.${isSharesView?' Angka ditampilkan sebagai jumlah lembar saham dengan pemisah ribuan format Indonesia.':''}</p>`;
     normNames.slice(0,15).forEach(norm=>{
       const meiRows = MEI.filter(r=>r.norm===norm);
       const junRows = JUN.filter(r=>r.norm===norm);
@@ -551,40 +587,60 @@
           mayPct:mr ? mr.p : null,
           junPct:jr ? jr.p : null,
           julPct:jl ? jl.p : null,
+          mayShares:mr ? mr.sh : null,
+          junShares:jr ? jr.sh : null,
+          julShares:jl ? jl.sh : null,
           deltaMayJun:periodDelta(mr, jr),
           deltaJunJul:periodDelta(jr, jl),
           statusMayJun:periodStatus(mr, jr, false),
-          statusJunJul:periodStatus(jr, jl, false)
+          statusJunJul:periodStatus(jr, jl, false),
+          shareDeltaMayJun:periodShareDelta(mr, jr),
+          shareDeltaJunJul:periodShareDelta(jr, jl),
+          shareStatusMayJun:periodShareStatus(mr, jr),
+          shareStatusJunJul:periodShareStatus(jr, jl)
         };
       });
-      const sortState = getInvestorSortState(norm);
+      const sortState = getInvestorSortState(norm, view);
       const sortedHoldings = sortRowsByNumber(holdings, sortState.key, sortState.dir);
       const rows = sortedHoldings.map(holding=>{
-        const rowClass = holding.statusJunJul==='baru'
+        const latestStatus = isSharesView ? holding.shareStatusJunJul : holding.statusJunJul;
+        const rowClass = latestStatus==='baru'
           ? 'row-new'
-          : (holding.statusJunJul==='keluar' ? 'row-exit' : '');
+          : (latestStatus==='keluar' ? 'row-exit' : '');
+        const mayValue = isSharesView ? fmtShares(holding.mayShares) : fmtPct(holding.mayPct);
+        const junValue = isSharesView ? fmtShares(holding.junShares) : fmtPct(holding.junPct);
+        const julValue = isSharesView ? fmtShares(holding.julShares) : fmtPct(holding.julPct);
+        const mayJunChange = isSharesView
+          ? shareTransitionCell(holding.shareDeltaMayJun, holding.shareStatusMayJun)
+          : transitionCell(holding.deltaMayJun, holding.statusMayJun);
+        const junJulChange = isSharesView
+          ? shareTransitionCell(holding.shareDeltaJunJul, holding.shareStatusJunJul)
+          : transitionCell(holding.deltaJunJul, holding.statusJunJul);
+        const mayJunDelta = isSharesView ? holding.shareDeltaMayJun : holding.deltaMayJun;
+        const junJulDelta = isSharesView ? holding.shareDeltaJunJul : holding.deltaJunJul;
         return `<tr class="investor-stock-row ${rowClass}" data-ticker="${holding.ticker}" tabindex="0" role="button" aria-label="Buka detail saham ${holding.ticker}">
           <td class="investor-stock-cell">
             <div class="mover-ticker">${holding.ticker}</div>
             <div class="mover-name mover-name-full">${escapeHtml(holding.issuer)}</div>
           </td>
-          <td class="r-pct investor-period-cell">${fmtPct(holding.mayPct)}</td>
-          <td class="r-pct investor-period-cell">${fmtPct(holding.junPct)}</td>
-          <td class="r-pct investor-period-cell">${fmtPct(holding.julPct)}</td>
-          <td class="r-delta ${deltaClass(holding.deltaMayJun)}">${transitionCell(holding.deltaMayJun, holding.statusMayJun)}</td>
-          <td class="r-delta ${deltaClass(holding.deltaJunJul)}">${transitionCell(holding.deltaJunJul, holding.statusJunJul)}</td>
+          <td class="r-pct investor-period-cell${isSharesView?' share-cell':''}">${mayValue}</td>
+          <td class="r-pct investor-period-cell${isSharesView?' share-cell':''}">${junValue}</td>
+          <td class="r-pct investor-period-cell${isSharesView?' share-cell':''}">${julValue}</td>
+          <td class="r-delta ${deltaClass(mayJunDelta)}${isSharesView?' share-delta-cell':''}">${mayJunChange}</td>
+          <td class="r-delta ${deltaClass(junJulDelta)}${isSharesView?' share-delta-cell':''}">${junJulChange}</td>
         </tr>`;
       }).join('');
       html += `<div class="result-card">
         <div class="result-head"><div><div class="rh-ticker investor-name">${escapeHtml(namesMap[norm])}</div>
-        <div class="rh-issuer">terdaftar sebagai pemegang &gt;1% di ${tickers.size} saham pada setidaknya satu periode</div></div></div>
-        <div class="table-scroll investor-table-scroll" role="region" aria-label="Riwayat kepemilikan ${escapeHtml(namesMap[norm])}" tabindex="0">
-          <table class="hold-table investor-hold-table">
+        <div class="rh-issuer">terdaftar sebagai pemegang &gt;1% di ${tickers.size} saham pada setidaknya satu periode</div></div>
+        ${isSharesView?'<div class="rh-badges"><span class="badge badge-shares">TOTAL HOLDING SHARES</span></div>':''}</div>
+        <div class="table-scroll investor-table-scroll" role="region" aria-label="Riwayat ${metricName} ${escapeHtml(namesMap[norm])}" tabindex="0">
+          <table class="hold-table investor-hold-table${isSharesView?' shares-view':''}">
             <thead><tr>
               <th scope="col">Saham</th>
-              ${investorSortHeader(norm, 'mayPct', 'Mei 2026')}
-              ${investorSortHeader(norm, 'junPct', 'Juni 2026')}
-              ${investorSortHeader(norm, 'julPct', 'Juli 2026')}
+              ${investorSortHeader(norm, isSharesView?'mayShares':'mayPct', 'Mei 2026', view)}
+              ${investorSortHeader(norm, isSharesView?'junShares':'junPct', 'Juni 2026', view)}
+              ${investorSortHeader(norm, isSharesView?'julShares':'julPct', 'Juli 2026', view)}
               <th class="text-right" scope="col">Mei→Juni</th>
               <th class="text-right" scope="col">Juni→Juli</th>
             </tr></thead>
@@ -594,17 +650,18 @@
       </div>`;
     });
     mainArea.innerHTML = html;
-    mainArea.querySelectorAll('.investor-sort-btn[data-investor-key][data-key]').forEach(button=>{
+    mainArea.querySelectorAll('.investor-sort-btn[data-investor-key][data-view][data-key]').forEach(button=>{
       button.addEventListener('click', event=>{
         event.stopPropagation();
         const norm = decodeURIComponent(button.dataset.investorKey);
+        const currentView = button.dataset.view;
         const key = button.dataset.key;
-        const current = getInvestorSortState(norm);
-        investorSortState[norm] = {
+        const current = getInvestorSortState(norm, currentView);
+        investorSortState[`${currentView}:${norm}`] = {
           key,
           dir:current.key===key && current.dir==='desc' ? 'asc' : 'desc'
         };
-        renderInvestorResults(searchInput.value.trim());
+        renderInvestorResults(searchInput.value.trim(), currentView);
       });
     });
     mainArea.querySelectorAll('table.investor-hold-table tr[data-ticker]').forEach(row=>{
@@ -633,6 +690,7 @@
     tabBtns.forEach(b => b.classList.toggle('active', b.dataset.mode===mode));
     if(mode==='saham') searchInput.placeholder = 'Ketik kode saham, mis. BBCA, AWAN, PKPK...';
     else if(mode==='investor') searchInput.placeholder = 'Ketik nama investor, mis. TASPEN, BAKRIE...';
+    else if(mode==='investor-shares') searchInput.placeholder = 'Ketik nama investor untuk melihat total holding shares...';
     else searchInput.placeholder = 'Filter kode saham atau nama emiten (opsional)...';
     renderHints();
   }
@@ -675,7 +733,8 @@
     if(mode==='screening'){ renderScreening(q); return; }
     if(!q){ renderOverview(); return; }
     if(mode==='saham') renderTickerResults(q);
-    else renderInvestorResults(q);
+    else if(mode==='investor') renderInvestorResults(q, 'percentage');
+    else renderInvestorResults(q, 'shares');
   }
 
   function renderScreening(filterQuery){
