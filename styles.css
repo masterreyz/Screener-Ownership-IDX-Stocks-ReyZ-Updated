@@ -1062,11 +1062,11 @@
   }
 
   table.investor-hold-table{
-    min-width:1040px;
+    min-width:1280px;
   }
 
   table.investor-hold-table.shares-view{
-    min-width:1320px;
+    min-width:1580px;
   }
 
   table.investor-hold-table th:first-child,
@@ -1103,7 +1103,14 @@
   table.investor-hold-table th:nth-child(6),
   table.investor-hold-table td:nth-child(5),
   table.investor-hold-table td:nth-child(6){
-    min-width:170px;
+    min-width:250px;
+  }
+
+  table.investor-hold-table.shares-view th:nth-child(5),
+  table.investor-hold-table.shares-view th:nth-child(6),
+  table.investor-hold-table.shares-view td:nth-child(5),
+  table.investor-hold-table.shares-view td:nth-child(6){
+    min-width:285px;
   }
 
   table.investor-hold-table .investor-stock-cell .mover-name{
