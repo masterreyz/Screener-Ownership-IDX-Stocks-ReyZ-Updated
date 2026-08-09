@@ -153,7 +153,7 @@
         deltaJunJul,
         statusMayJun,
         statusJunJul,
-        // Alias berikut mempertahankan kompatibilitas ringkasan/screening terbaru.
+        // Alias berikut mempertahankan kompatibilitas ringkasan dan ticker tape terbaru.
         delta: deltaJunJul,
         status: statusJunJul,
         shares: display.sh
@@ -203,33 +203,76 @@
     if(screenData) return screenData;
     screenData = [...allTickers].map(t => {
       const d = getTickerDiff(t);
-      let newC=0, upC=0, downC=0, exitC=0, flatC=0;
+      let newJun=0, upJun=0, downJun=0, exitJun=0;
+      let newJul=0, upJul=0, downJul=0, exitJul=0;
       d.rows.forEach(r=>{
-        if(r.status==='baru') newC++;
-        else if(r.status==='keluar') exitC++;
-        else if(r.status==='naik') upC++;
-        else if(r.status==='turun') downC++;
-        else flatC++;
+        if(r.statusMayJun==='baru') newJun++;
+        else if(r.statusMayJun==='keluar') exitJun++;
+        else if(r.statusMayJun==='naik') upJun++;
+        else if(r.statusMayJun==='turun') downJun++;
+
+        if(r.statusJunJul==='baru') newJul++;
+        else if(r.statusJunJul==='keluar') exitJul++;
+        else if(r.statusJunJul==='naik') upJul++;
+        else if(r.statusJunJul==='turun') downJul++;
       });
       return {
         ticker:t, issuer:d.issuer,
-        newC, upC, downC, exitC, flatC,
-        totalHolders: d.rows.filter(r=>r.julPct!=null).length
+        totalMay: d.rows.filter(r=>r.mayPct!=null).length,
+        newJun, upJun, downJun, exitJun,
+        totalJun: d.rows.filter(r=>r.junPct!=null).length,
+        newJul, upJul, downJul, exitJul,
+        totalJul: d.rows.filter(r=>r.julPct!=null).length
       };
     });
     return screenData;
   }
 
-  const SCREEN_COLS = [
-    { key:'newC',   label:'Investor Baru',    cls:'cell-new'  },
-    { key:'upC',    label:'Nambah Kepemilikan', cls:'cell-up'   },
-    { key:'downC',  label:'Kurangi Kepemilikan', cls:'cell-down' },
-    { key:'exitC',  label:'Investor Keluar',  cls:'cell-exit' },
-    { key:'totalHolders', label:'Total Pemegang &gt;1%', cls:'', hideMobile:true },
+  const SCREEN_GROUPS = [
+    {
+      label:'Mei 2026',
+      cols:[
+        {key:'totalMay', label:'Total &gt;1%', sortLabel:'Total pemegang &gt;1% Mei 2026', cls:'cell-total'},
+      ]
+    },
+    {
+      label:'Perubahan Mei → Juni',
+      cols:[
+        {key:'newJun', label:'Baru', sortLabel:'Investor baru Juni 2026', cls:'cell-new'},
+        {key:'upJun', label:'Nambah', sortLabel:'Nambah kepemilikan Mei → Juni', cls:'cell-up'},
+        {key:'downJun', label:'Kurangi', sortLabel:'Kurangi kepemilikan Mei → Juni', cls:'cell-down'},
+        {key:'exitJun', label:'Keluar', sortLabel:'Investor keluar Juni 2026', cls:'cell-exit'},
+      ]
+    },
+    {
+      label:'Juni 2026',
+      cols:[
+        {key:'totalJun', label:'Total &gt;1%', sortLabel:'Total pemegang &gt;1% Juni 2026', cls:'cell-total'},
+      ]
+    },
+    {
+      label:'Perubahan Juni → Juli',
+      cols:[
+        {key:'newJul', label:'Baru', sortLabel:'Investor baru Juli 2026', cls:'cell-new'},
+        {key:'upJul', label:'Nambah', sortLabel:'Nambah kepemilikan Juni → Juli', cls:'cell-up'},
+        {key:'downJul', label:'Kurangi', sortLabel:'Kurangi kepemilikan Juni → Juli', cls:'cell-down'},
+        {key:'exitJul', label:'Keluar', sortLabel:'Investor keluar Juli 2026', cls:'cell-exit'},
+      ]
+    },
+    {
+      label:'Juli 2026',
+      cols:[
+        {key:'totalJul', label:'Total &gt;1%', sortLabel:'Total pemegang &gt;1% Juli 2026', cls:'cell-total'},
+      ]
+    },
   ];
-  let screenSortKey = 'newC';
+  const SCREEN_COLS = SCREEN_GROUPS.flatMap(group=>group.cols);
+  let screenSortKey = 'totalJul';
   let screenSortDir = 'desc';
   let screenShowAll = false;
+
+  // Tiap kartu saham menyimpan pilihan sort-nya sendiri.
+  const tickerSortState = {};
 
   // ---------- Rendering helpers ----------
   const mainArea = document.getElementById('mainArea');
@@ -270,6 +313,39 @@
     return fmtDelta(delta)+' '+statusChip(status);
   }
 
+  function getTickerSortState(ticker){
+    return tickerSortState[ticker] || {key:'julPct', dir:'desc'};
+  }
+
+  function sortRowsByNumber(rows, key, dir){
+    return rows.slice().sort((a,b)=>{
+      const aValue = a[key];
+      const bValue = b[key];
+      const aEmpty = aValue==null || Number.isNaN(aValue);
+      const bEmpty = bValue==null || Number.isNaN(bValue);
+
+      // Nilai kosong selalu berada di bawah, baik sort naik maupun turun.
+      if(aEmpty && bEmpty) return a.name.localeCompare(b.name, 'id');
+      if(aEmpty) return 1;
+      if(bEmpty) return -1;
+
+      const numericDiff = dir==='desc' ? bValue-aValue : aValue-bValue;
+      return numericDiff || a.name.localeCompare(b.name, 'id');
+    });
+  }
+
+  function tickerSortHeader(ticker, key, label){
+    const state = getTickerSortState(ticker);
+    const sorted = state.key===key;
+    const arrow = sorted ? (state.dir==='desc' ? '▼' : '▲') : '↕';
+    const ariaSort = sorted ? (state.dir==='desc' ? 'descending' : 'ascending') : 'none';
+    return `<th class="text-right${sorted?' sorted':''}" aria-sort="${ariaSort}">
+      <button type="button" class="table-sort-btn ticker-sort-btn" data-ticker="${ticker}" data-key="${key}" aria-label="Urutkan ${label}">
+        <span>${label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
+      </button>
+    </th>`;
+  }
+
   function renderTickerCard(ticker){
     const d = getTickerDiff(ticker);
     if(!d.rows.length) return '';
@@ -279,7 +355,9 @@
     if(newN) badges += `<span class="badge badge-new">+${newN} BARU DI JULI</span>`;
     if(exitN) badges += `<span class="badge badge-exit">-${exitN} KELUAR DI JULI</span>`;
 
-    let rows = d.rows.map(r => {
+    const sortState = getTickerSortState(ticker);
+    const sortedRows = sortRowsByNumber(d.rows, sortState.key, sortState.dir);
+    let rows = sortedRows.map(r => {
       const rowClass = r.statusJunJul==='baru' ? 'row-new' : (r.statusJunJul==='keluar' ? 'row-exit' : '');
       return `<tr class="${rowClass}">
         <td><div class="r-name">${escapeHtml(r.name)}</div></td>
@@ -303,12 +381,34 @@
       <div class="table-scroll" role="region" aria-label="Tabel kepemilikan saham" tabindex="0">
       <table class="hold-table">
         <thead><tr>
-          <th>Investor</th><th class="r-class">Klasifikasi</th><th style="text-align:right">Mei 2026</th><th style="text-align:right">Juni 2026</th><th style="text-align:right">Juli 2026</th><th style="text-align:right">Mei→Juni</th><th style="text-align:right">Juni→Juli</th>
+          <th>Investor</th>
+          <th class="r-class">Klasifikasi</th>
+          ${tickerSortHeader(ticker, 'mayPct', 'Mei 2026')}
+          ${tickerSortHeader(ticker, 'junPct', 'Juni 2026')}
+          ${tickerSortHeader(ticker, 'julPct', 'Juli 2026')}
+          ${tickerSortHeader(ticker, 'deltaMayJun', 'Mei→Juni')}
+          ${tickerSortHeader(ticker, 'deltaJunJul', 'Juni→Juli')}
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
       </div>
     </div>`;
+  }
+
+  function wireTickerSortControls(){
+    mainArea.querySelectorAll('.ticker-sort-btn[data-ticker][data-key]').forEach(button=>{
+      button.addEventListener('click', event=>{
+        event.stopPropagation();
+        const ticker = button.dataset.ticker;
+        const key = button.dataset.key;
+        const current = getTickerSortState(ticker);
+        tickerSortState[ticker] = {
+          key,
+          dir: current.key===key && current.dir==='desc' ? 'asc' : 'desc'
+        };
+        renderTickerResults(searchInput.value.trim());
+      });
+    });
   }
 
   function escapeHtml(s){
@@ -363,7 +463,7 @@
             <div class="mover-pct" style="color:var(--gold)">lihat →</div>
           </div>`).join('')}
       </div>` : ''}
-      <p class="foot-note">Tabel detail menampilkan data berurutan dari Mei, Juni, lalu Juli 2026. Ringkasan, screening, dan ticker pergerakan menggunakan perbandingan periode terbaru, yaitu Juni → Juli 2026. Nama investor dinormalisasi (menghapus "PT", "Tbk", tanda baca, dan kata dalam kurung) agar variasi penulisan nama tidak keliru dihitung sebagai investor baru. Data: KSEI, pemegang saham &gt;1%, Mei–Juli 2026.</p>
+      <p class="foot-note">Tabel detail menampilkan data berurutan dari Mei, Juni, lalu Juli 2026. Screening menyediakan metrik terpisah untuk Mei → Juni dan Juni → Juli, sedangkan ringkasan serta ticker pergerakan memakai periode terbaru, yaitu Juni → Juli 2026. Nama investor dinormalisasi (menghapus "PT", "Tbk", tanda baca, dan kata dalam kurung) agar variasi penulisan nama tidak keliru dihitung sebagai investor baru. Data: KSEI, pemegang saham &gt;1%, Mei–Juli 2026.</p>
     `;
     mainArea.innerHTML = html;
     mainArea.querySelectorAll('.mover-row[data-ticker]').forEach(el=>{
@@ -390,6 +490,7 @@
     }
     matches = matches.slice(0, 25);
     mainArea.innerHTML = `<div class="section-title">${matches.length} saham ditemukan</div>` + matches.map(renderTickerCard).join('');
+    wireTickerSortControls();
   }
 
   function renderInvestorResults(query){
@@ -469,12 +570,19 @@
   function renderHints(){
     if(mode==='screening'){
       const opts = [
-        {label:'Investor baru terbanyak', key:'newC'},
-        {label:'Paling banyak nambah kepemilikan', key:'upC'},
-        {label:'Paling banyak kurangi kepemilikan', key:'downC'},
-        {label:'Investor keluar terbanyak', key:'exitC'},
+        {label:'Investor baru Juni', key:'newJun'},
+        {label:'Investor baru Juli', key:'newJul'},
+        {label:'Nambah Mei→Juni', key:'upJun'},
+        {label:'Nambah Juni→Juli', key:'upJul'},
+        {label:'Kurangi Mei→Juni', key:'downJun'},
+        {label:'Kurangi Juni→Juli', key:'downJul'},
+        {label:'Keluar Juni', key:'exitJun'},
+        {label:'Keluar Juli', key:'exitJul'},
+        {label:'Total pemegang Mei', key:'totalMay'},
+        {label:'Total pemegang Juni', key:'totalJun'},
+        {label:'Total pemegang Juli', key:'totalJul'},
       ];
-      hintRow.innerHTML = opts.map(o=>`<span class="hint-chip" data-key="${o.key}">${o.label}</span>`).join('');
+      hintRow.innerHTML = opts.map(o=>`<button type="button" class="hint-chip" data-key="${o.key}">${o.label}</button>`).join('');
       hintRow.querySelectorAll('.hint-chip').forEach(el=>{
         el.addEventListener('click', ()=>{
           screenSortKey = el.dataset.key; screenSortDir = 'desc'; screenShowAll = false;
@@ -507,16 +615,27 @@
       rows = rows.filter(r => r.ticker.includes(q) || (r.issuer||'').toUpperCase().includes(q));
     }
     rows = rows.slice().sort((a,b)=>{
-      const diff = (b[screenSortKey] - a[screenSortKey]);
-      return screenSortDir==='desc' ? diff : -diff;
+      const diff = screenSortDir==='desc'
+        ? b[screenSortKey] - a[screenSortKey]
+        : a[screenSortKey] - b[screenSortKey];
+      return diff || a.ticker.localeCompare(b.ticker);
     });
     const total = rows.length;
     const shown = screenShowAll ? rows : rows.slice(0, 50);
 
-    const headHtml = SCREEN_COLS.map(c => {
+    const groupHeadHtml = SCREEN_GROUPS.map(group=>
+      `<th class="screen-group" colspan="${group.cols.length}" scope="colgroup">${group.label}</th>`
+    ).join('');
+
+    const metricHeadHtml = SCREEN_COLS.map(c => {
       const sorted = c.key===screenSortKey;
-      const arrow = sorted ? (screenSortDir==='desc' ? '▼' : '▲') : '';
-      return `<th data-key="${c.key}" class="${sorted?'sorted':''}${c.hideMobile?' th-hide-mobile':''}">${c.label}<span class="arrow">${arrow}</span></th>`;
+      const arrow = sorted ? (screenSortDir==='desc' ? '▼' : '▲') : '↕';
+      const ariaSort = sorted ? (screenSortDir==='desc' ? 'descending' : 'ascending') : 'none';
+      return `<th class="${sorted?'sorted':''}" aria-sort="${ariaSort}">
+        <button type="button" class="screen-sort-btn" data-key="${c.key}" aria-label="Urutkan ${c.sortLabel}">
+          <span>${c.label}</span><span class="arrow" aria-hidden="true">${arrow}</span>
+        </button>
+      </th>`;
     }).join('');
 
     const bodyHtml = shown.map(r => {
@@ -537,23 +656,27 @@
     mainArea.innerHTML = `
       <div class="section-title">Screening Saham</div>
       <div class="screen-toolbar">
-        <div class="screen-count">Menampilkan <b>${shown.length}</b> dari <b>${total}</b> saham &middot; diurutkan berdasarkan <b>${SCREEN_COLS.find(c=>c.key===screenSortKey).label}</b> (${screenSortDir==='desc'?'terbesar → terkecil':'terkecil → terbesar'})</div>
+        <div class="screen-count">Menampilkan <b>${shown.length}</b> dari <b>${total}</b> saham &middot; diurutkan berdasarkan <b>${SCREEN_COLS.find(c=>c.key===screenSortKey).sortLabel}</b> (${screenSortDir==='desc'?'terbesar → terkecil':'terkecil → terbesar'})</div>
       </div>
       <div class="screen-card">
         <div class="screen-scroll" role="region" aria-label="Tabel screening saham" tabindex="0">
           <table class="screen-table">
-            <thead><tr><th class="th-label">Saham</th>${headHtml}</tr></thead>
-            <tbody>${bodyHtml || `<tr><td colspan="6" style="text-align:center; color:var(--text-faint); font-family:var(--font-body);">Tidak ada hasil.</td></tr>`}</tbody>
+            <thead>
+              <tr class="screen-group-row"><th class="th-label" rowspan="2" scope="col">Saham</th>${groupHeadHtml}</tr>
+              <tr class="screen-metric-row">${metricHeadHtml}</tr>
+            </thead>
+            <tbody>${bodyHtml || `<tr><td colspan="${SCREEN_COLS.length+1}" class="screen-empty">Tidak ada hasil.</td></tr>`}</tbody>
           </table>
         </div>
         ${!screenShowAll && total>50 ? `<button class="show-more-btn" id="showMoreBtn">TAMPILKAN SEMUA (${total})</button>` : ''}
       </div>
-      <p class="foot-note">Klik judul kolom untuk mengurutkan dari terbesar atau terkecil. Klik baris untuk melihat detail pemegang saham. Screening memakai perubahan periode terbaru, yaitu Juni → Juli 2026. Tabel detail tetap menampilkan urutan lengkap Mei → Juni → Juli 2026.</p>
+      <p class="foot-note">Klik tombol judul kolom untuk mengurutkan terbesar → terkecil atau terkecil → terbesar. Grup Mei → Juni menghasilkan metrik investor baru/menambah/mengurangi/keluar di Juni; grup Juni → Juli menghasilkan metrik yang sama di Juli. Kolom total menghitung pemegang saham dengan kepemilikan &gt;1% pada masing-masing bulan. Klik baris saham untuk membuka detailnya.</p>
     `;
 
-    mainArea.querySelectorAll('table.screen-table th[data-key]').forEach(th=>{
-      th.addEventListener('click', ()=>{
-        const key = th.getAttribute('data-key');
+    mainArea.querySelectorAll('.screen-sort-btn[data-key]').forEach(button=>{
+      button.addEventListener('click', event=>{
+        event.stopPropagation();
+        const key = button.dataset.key;
         if(screenSortKey===key) screenSortDir = screenSortDir==='desc' ? 'asc' : 'desc';
         else { screenSortKey = key; screenSortDir = 'desc'; }
         renderScreening(searchInput.value.trim());
